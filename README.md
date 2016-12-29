@@ -17,3 +17,15 @@
 	Raspberry Pi transparent enclosure
 	Bicolor LED (R1=150 Ohm?)
 	Breadboard 400 contacts
+
+# Installation (Arch Linux)
+	1. Plug your device
+	2. Find the serial id (Ex. for device /dev/ttyUSB0);
+	udevadm info -a -n /dev/ttyUSB0 | grep '{serial}' | head -n1
+
+	3. Create the file /etc/udev/rules.d/66-tty.rules;
+	#Set the serial id (Ex. 0000:00:14.0) according to your device
+	KERNEL=="ttyUSB*",MODE="0666"
+	SUBSYSTEM=="tty", ATTRS{serial}=="0000:00:14.0", SYMLINK+="rf_bridge"
+	
+	4. Reboot
