@@ -1,5 +1,7 @@
 # Bridge
-	Bridge is a python application allowing to communicate and interact with various radio devices. Parsing scripts are easily added to suit differents needs. A parsing script exemple for controlling sound, playback and netflix is provided.
+Bridge is a python application allowing to communicate and interact with various radio devices.Parsing scripts are easily added to suit differents needs. A parsing script exemple for controlling sound, playback and netflix is provided.
+
+![alt tag](https://raw.githubusercontent.com/willbelr/rf_bridge/master/pictures/GUI.png)
 
 # Dependencies
 	Require python 3 and modules pyqt5, pyserial, yaml
@@ -37,3 +39,12 @@
 	SUBSYSTEM=="tty", ATTRS{serial}=="0000:00:14.0", SYMLINK+="rf_bridge"
 	
 	4. Reboot
+	
+	Note: if you use chinese clones, they might all have the same serial number.
+	Therefore, to avoid conflicts the devices must always be plugged in the same slot,
+	and identified with KERNELS instead.
+	
+	Ex. KERNEL=="ttyUSB*", KERNELS=="1-2", SYMLINK+="rf_bridge"
+
+
+![alt tag](https://raw.githubusercontent.com/willbelr/rf_bridge/master/pictures/bridge1.jpg)
