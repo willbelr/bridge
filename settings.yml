@@ -1,0 +1,14 @@
+settings:
+  autoconnect: true
+  autoreconnect: true
+  baudrate: '9600'
+  csvlog: false
+  device: /dev/rf_bridge
+  logcsvFile: ./log.csv
+  lograwFile: ./log.txt
+  parser: false
+  parserFile: ./parser/media.py
+  parserStdout: false
+  rawlog: false
+  savelastconnection: true
+  startminimized: false
