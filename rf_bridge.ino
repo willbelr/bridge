@@ -1,5 +1,6 @@
 //#define DEBUG
-#define SERVER_ADDRESS 1
+#define BRIDGE_ADDRESS 0 
+#define RFLIGHT_ADDRESS 3
 #define PAIRING 0
 #define RXTX 1
 
@@ -13,10 +14,10 @@ const byte redLED = A4;
 const byte greenLED = A5;
 const byte B1PIN = 5;
 const unsigned long timeoutInterval = 30*1000L;
-const unsigned int pingInterval = 10000;
+const unsigned int pingInterval = 30000;
 const unsigned int ledInterval = 600;
 const unsigned int ledTimeout = 25;
-const unsigned int pairingTimeout = 10000;
+const unsigned int pairingTimeout = 6000; //10000
 unsigned long previousTimeoutInterval;
 unsigned long previousPingInterval;
 unsigned long previousLedInterval;
@@ -27,7 +28,7 @@ uint8_t clientId = EEPROM.read(1);
 uint8_t state = PAIRING;
 
 RH_NRF24 nrf24;
-RHReliableDatagram manager(nrf24, SERVER_ADDRESS);
+RHReliableDatagram manager(nrf24, BRIDGE_ADDRESS);
 
 int main(void)
 {
@@ -61,7 +62,7 @@ int main(void)
 		else if (state == RXTX)
 		{
 			serial_listen();
-			rf_ping();
+			//rf_ping();
 
 	    	if (digitalRead(B1PIN) == LOW)
 	    	{
@@ -143,6 +144,7 @@ void rf_sendString(char str[RH_NRF24_MAX_MESSAGE_LEN])
     uint8_t rf_data[RH_NRF24_MAX_MESSAGE_LEN];
     strcpy((char*)rf_data, str); 
     manager.sendtoWait(rf_data, sizeof(rf_data), clientId);
+    manager.sendtoWait(rf_data, sizeof(rf_data), RFLIGHT_ADDRESS);
 	if (strcmp((char*)rf_data, "ping")) { Serial.print(F("b;")); Serial.println((char*)rf_data); }
 }
 
@@ -153,10 +155,6 @@ void rf_ping()
 		previousPingInterval = millis();
 		ping++;
 		rf_sendString("ping");
-		if (ping > 1)
-		{	
-			digitalWrite(redLED, LOW); delay(50); digitalWrite(redLED, HIGH);
-		}
-		else { digitalWrite(redLED, LOW); }
+		digitalWrite(redLED, HIGH); delay(50); digitalWrite(redLED, LOW);
 	}
 }
