@@ -1,3 +1,11 @@
+# Bridge
+	Bridge is a python application allowing to communicate and interact with various radio devices. Parsing scripts are easily added to suit differents needs. A parsing script exemple for controlling sound, playback and netflix is provided.
+
+# Dependencies
+	Require python 3 and modules pyqt5, pyserial, yaml
+	Media parser require python-daemon
+	Linux (may also work on other platforms)
+
 # Pinout
 	A6: LED+ (RED)
 	A7: LED+ (GREEN)
