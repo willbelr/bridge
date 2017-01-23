@@ -1,5 +1,5 @@
 # Bridge
-Bridge is a python application allowing to communicate and interact with various radio devices.Parsing scripts are easily added to suit differents needs. A parsing script exemple for controlling sound, playback and netflix is provided.
+Bridge is a python application allowing to communicate and interact with various radio devices. Parsing modules are easily added to suit differents needs. As a starter, a parser exemple (media.py) is provided. It's purpose is to control media application from a rf remote (see https://github.com/willbelr/rf_remote).
 
 ![alt tag](https://raw.githubusercontent.com/willbelr/rf_bridge/master/pictures/GUI.png)
 
