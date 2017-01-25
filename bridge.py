@@ -3,13 +3,14 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import QThread, QObject, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import QSystemTrayIcon, QDesktopWidget
 
-import consoleUi
+from gui import consoleUi
 import serial, glob, time
 import sys, subprocess, yaml
 
-
-global serialState
+global serialState, histList, histPos
 serialState = False
+histList = []
+histPos = 0
 
 def portsEnumerate():
     if sys.platform.startswith('linux') or sys.platform.startswith('cygwin'):
@@ -109,6 +110,7 @@ class initGui(QtWidgets.QMainWindow):
         self.ui.sendButton.clicked.connect(self.form.send)
         self.ui.resetButton.clicked.connect(self.onResetButton)
         self.ui.menuList.selectionModel().selectionChanged.connect(self.menuListEvent)
+        self.ui.sendText.keyPressEvent = self.sendTextEvent
 
         self.ui.startupCheckbox.clicked.connect(self.autoconnectCheckboxEvent)
         self.ui.reconnectCheckbox.clicked.connect(self.autoreconnectCheckboxEvent)
@@ -173,7 +175,7 @@ class initGui(QtWidgets.QMainWindow):
         except:
             print("Warning: settings file not found or corrupted") #@!
         
-        icon = QtGui.QIcon('icon.svg')
+        icon = QtGui.QIcon('./gui/icon.svg')
         self.trayIcon = QSystemTrayIcon(self)
         self.trayIcon.setIcon(icon)
         self.trayIcon.activated.connect(self.trayClickEvent)
@@ -181,6 +183,28 @@ class initGui(QtWidgets.QMainWindow):
 
         if self.ui.startupCheckbox.isChecked():
             self.onConnectButton()
+
+    def sendTextEvent(self, event):
+        global histList, histPos
+        
+        key = event.key()
+        if len(histList) > 0 and (key == QtCore.Qt.Key_Down or key == QtCore.Qt.Key_Up):
+            if key == QtCore.Qt.Key_Down:
+                histPos += 1
+            elif key == QtCore.Qt.Key_Up:
+                histPos -= 1
+
+            if histPos < 0:
+                histPos = 0
+            elif histPos >= len(histList):
+                histPos = len(histList)
+
+            if histPos == len(histList):
+                self.ui.sendText.setText("")
+            else:
+                self.ui.sendText.setText(histList[histPos])
+
+        QtWidgets.QLineEdit.keyPressEvent(self.ui.sendText, event)
 
     def trayClickEvent(self, click):
         if click == 3: #left
@@ -203,8 +227,10 @@ class initGui(QtWidgets.QMainWindow):
         print(i)
 
     def onSendButton(self):
-        global serialState, ser
+        global serialState, ser, histList, histPos
         if serialState and self.ui.sendText.text():
+            histList.append(self.ui.sendText.text())
+            histPos = len(histList)
             cmd = self.ui.sendText.text() + "\n"
             ser.write(cmd.encode())
             self.ui.sendText.clear()
@@ -306,7 +332,7 @@ if __name__=='__main__':
     app =  QtWidgets.QApplication(sys.argv)
     Dialog = initGui()
 
-    sshFile="consoleUi.css"
+    sshFile="./gui/consoleUi.css"
     with open(sshFile,"r") as fh:
         Dialog.setStyleSheet(fh.read())
     
