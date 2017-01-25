@@ -46,5 +46,6 @@ Bridge is a python application allowing to communicate and interact with various
 	
 	Ex. KERNEL=="ttyUSB*", KERNELS=="1-2", SYMLINK+="rf_bridge"
 
-
+# Picutres
 ![alt tag](https://raw.githubusercontent.com/willbelr/rf_bridge/master/pictures/bridge1.jpg)
+![alt tag](https://raw.githubusercontent.com/willbelr/rf_bridge/master/pictures/bridge2.jpg)
