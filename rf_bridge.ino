@@ -1,18 +1,16 @@
-//#define DEBUG
-#define BRIDGE_ADDRESS 0 
+#define BRIDGE_ADDRESS 0
 #define RFLIGHT_ADDRESS 3
 #define PAIRING 0
 #define RXTX 1
 
-#include "DebugUtils.h"
 #include <RHReliableDatagram.h>
 #include <RH_NRF24.h>
 #include <SPI.h>
 #include <EEPROM.h>
 
-const byte redLED = A4;
-const byte greenLED = A5;
-const byte B1PIN = 5;
+const byte LED_RED = A4;
+const byte LED_GREEN = A5;
+const byte PAIRING_BUTTON = 5;
 const unsigned long timeoutInterval = 30*1000L;
 const unsigned int pingInterval = 30000;
 const unsigned int ledInterval = 600;
@@ -35,13 +33,16 @@ int main(void)
 	init();
 	{
 		Serial.begin(9600);
-		Serial.setTimeout(150);
-		Serial.println(F("BRIDGE"));
+		Serial.setTimeout(50);
+		delay(100); Serial.println(F("BRIDGE"));
+
+		char buf[5]; sprintf(buf, "%02x", clientId);
+		delay(100); Serial.print(F("client=")); Serial.println(buf);
 		
-		pinMode(redLED, OUTPUT); digitalWrite(redLED, LOW);
-		pinMode(greenLED, OUTPUT); digitalWrite(greenLED, LOW);
-	    pinMode(B1PIN, INPUT_PULLUP);
-		if (!manager.init()) DEBUG_PRINTLN("init failed");
+		pinMode(LED_RED, OUTPUT); digitalWrite(LED_RED, LOW);
+		pinMode(LED_GREEN, OUTPUT); digitalWrite(LED_GREEN, LOW);
+	    pinMode(PAIRING_BUTTON, INPUT_PULLUP);
+		if (!manager.init()) Serial.println(F("Error: init failed"));
 	}
 	while(1)
 	{
@@ -50,11 +51,12 @@ int main(void)
 			if (millis() - previousPairingTimeout >= pairingTimeout)
 			{
 				state = RXTX;
+				digitalWrite(LED_RED, LOW);
 			}
-			if (millis() - previousLedInterval >= ledInterval)
+			else if (millis() - previousLedInterval >= ledInterval)
 			{
-				digitalLow(greenLED);
-				digitalWrite(redLED, !digitalState(redLED));
+				digitalWrite(LED_GREEN, LOW);
+				digitalWrite(LED_RED, !digitalRead(LED_RED));
 	    		previousLedInterval = millis();
 			}
 
@@ -64,7 +66,7 @@ int main(void)
 			serial_listen();
 			//rf_ping();
 
-	    	if (digitalRead(B1PIN) == LOW)
+	    	if (digitalRead(PAIRING_BUTTON) == LOW)
 	    	{
 	    		previousPairingTimeout = millis();
 	    		state = PAIRING;
@@ -74,7 +76,7 @@ int main(void)
 		rf_listen();
 		if (millis() - previousLedTimeout >= ledTimeout)
 		{
-			digitalLow(greenLED);
+			digitalWrite(LED_GREEN, LOW);
 		}
 	}
 	return 0;
@@ -100,7 +102,7 @@ int i = 0;
 			c = Serial.read();
 			}
 		}
-		rf_sendString(serial_data); //Repeat string to controller
+		parseCmd(serial_data);
 	}
 }
 
@@ -120,19 +122,22 @@ void rf_listen()
 				{
 					ping = 0;
 					previousPingInterval = millis();
-					Serial.print(from, HEX); Serial.print(";"); Serial.println((char*)rf_buf);
-					digitalWrite(redLED, LOW);
-					digitalWrite(greenLED, HIGH);
+					char buf[5]; sprintf(buf, "%02x", from); //int to hex
+					Serial.print(buf); Serial.print(F(" ")); Serial.println((char*)rf_buf);
+					digitalWrite(LED_RED, LOW);
+					digitalWrite(LED_GREEN, HIGH);
 					previousLedTimeout = millis();
 				}
 
 			}
 			else if (state == PAIRING)
 			{
-				Serial.print("Paired with "); Serial.println(from, HEX);
 				clientId = from;
+				char buf[5]; sprintf(buf, "%02x", clientId);
+				Serial.print(F("client=")); Serial.println(buf);
+
 				EEPROM.write(1, from);
-				digitalLow(redLED);
+				digitalWrite(LED_RED, LOW);
 				state = RXTX;
 			}
 		}
@@ -143,11 +148,13 @@ void rf_sendString(char str[RH_NRF24_MAX_MESSAGE_LEN])
 {
     uint8_t rf_data[RH_NRF24_MAX_MESSAGE_LEN];
     strcpy((char*)rf_data, str); 
+    digitalWrite(LED_RED, HIGH);
     manager.sendtoWait(rf_data, sizeof(rf_data), clientId);
     manager.sendtoWait(rf_data, sizeof(rf_data), RFLIGHT_ADDRESS);
-	if (strcmp((char*)rf_data, "ping")) { Serial.print(F("b;")); Serial.println((char*)rf_data); }
+    digitalWrite(LED_RED, LOW);
+	if (strcmp((char*)rf_data, "ping")) { Serial.print(F("00 ")); Serial.println((char*)rf_data); }
 }
-
+/*
 void rf_ping()
 {
 	if (millis() - previousPingInterval >= pingInterval)
@@ -155,6 +162,40 @@ void rf_ping()
 		previousPingInterval = millis();
 		ping++;
 		rf_sendString("ping");
-		digitalWrite(redLED, HIGH); delay(50); digitalWrite(redLED, LOW);
+		digitalWrite(LED_RED, HIGH); delay(50); digitalWrite(LED_RED, LOW);
 	}
+}
+*/
+
+void parseCmd(char cmd[RH_NRF24_MAX_MESSAGE_LEN])
+{
+	char paramBuf[RH_NRF24_MAX_MESSAGE_LEN];
+	char* param = strtok(cmd, " ");
+	strcpy(paramBuf, param);
+
+	if (!strcmp(param, paramBuf)) { param = strtok(NULL, " "); }
+
+	if (!strcmp(paramBuf, "pairing"))
+	{
+		Serial.println(F("Pairing..."));
+		state = PAIRING;
+		previousPairingTimeout = millis();
+	}
+
+	else if (!strcmp(paramBuf, "setclient"))
+	{
+		if (!strcmp(param, "0") || int(param) == 0)
+		{
+			parseCmd("pairing");
+		}
+		else
+		{
+			state = RXTX;
+			clientId = atoi(param);
+			char buf[5]; sprintf(buf, "%02x", clientId);
+			Serial.print(F("client=")); Serial.println(buf);
+		}
+	}
+
+	else { rf_sendString(cmd); } //Transmit string to controller	
 }
