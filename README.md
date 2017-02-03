@@ -34,17 +34,23 @@ Bridge is a python application allowing to communicate and interact with various
 	udevadm info -a -n /dev/ttyUSB0 | grep '{serial}' | head -n1
 
 	3. Create the file /etc/udev/rules.d/66-tty.rules;
-	#Set the serial id (Ex. 0000:00:14.0) according to your device
+	4. Set the serial id (Ex. 0000:00:14.0) according to your device
 	KERNEL=="ttyUSB*",MODE="0666"
 	SUBSYSTEM=="tty", ATTRS{serial}=="0000:00:14.0", SYMLINK+="rf_bridge"
 	
-	4. Reboot
+	Or
 	
-	Note: if you use chinese clones, they might all have the same serial number.
-	Therefore, to avoid conflicts the devices must always be plugged in the same slot,
-	and identified with KERNELS instead.
+	If you use multiple chinese clones on the same computer, they might all have the
+	same serial number. Therefore, to avoid conflicts the devices must always be
+	plugged in the same slot, and identified with their KERNELS id instead.
+	
+	Again you can find the kernels id using;
+	udevadm info -a -n /dev/ttyUSBx
 	
 	Ex. KERNEL=="ttyUSB*", KERNELS=="1-2", SYMLINK+="rf_bridge"
+	
+	5. Reboot to load the new udev rules
+	
 
 # Picutres
 ![alt tag](https://raw.githubusercontent.com/willbelr/rf_bridge/master/pictures/bridge1.jpg)
