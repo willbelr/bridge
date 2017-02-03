@@ -1,44 +1,18 @@
 #!/usr/bin/python3
-import subprocess
 import serial
 import glob
-import yaml
 import sys
 import os
+import subprocess
+import pickle
+import yaml
 import time
 from time import strftime
-import pickle
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import QThread, QObject, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import QSystemTrayIcon, QDesktopWidget
 from gui import gui
-
-global serialState, histList, histPos, clientId
-serialState = False
-clientId = ""
-
-try:
-    with open('data/histList.pkl', 'rb') as f:
-        histList = pickle.load(f)
-except:
-    histList = []
-    pass
-histPos = len(histList)
-
-
-def loadSettings():
-    f = open('data/settings.yml')
-    dataMap = yaml.safe_load(f)
-    f.close()
-    return dataMap
-
-def saveSettings(settings, device, value):
-    dataMap = loadSettings()
-    f = open('data/settings.yml', "w")
-    dataMap[settings][device] = value
-    yaml.dump(dataMap, f, default_flow_style=False)
-    f.close()
 
 def portsEnumerate():
     if sys.platform.startswith('linux') or sys.platform.startswith('cygwin'):
@@ -57,10 +31,8 @@ def portsEnumerate():
         except (OSError, serial.SerialException):
             pass
 
-    #fixme: regex? @!
-    data = str(result).replace("[", '')
-    data = data.replace("]", '')
-    data = data.replace("'", '')
+    data = str(result)
+    data = data.replace("[", '').replace("]", '').replace("'", '')
     if data == "":
         data = "none"
     return data
@@ -74,41 +46,41 @@ class serialRead(QObject):
 
     @pyqtSlot()
     def loop(self):
-        global serialState, ser
         fault = 0
         reconnect = False
+        self.clientId = "00"
 
         while True:
-            if serialState:
+            if self.serialState:
                 try:
-                    data = ser.readline()
+                    data = self.ser.readline()
                     data = data.decode("ASCII")
                     data = data.rstrip()
-                    #ser.flushInput()
                     self.consoleWrite.emit(data)
                     fault = 0
                     reconnect = False
 
-                    if str(data[:7]) == "client=":
-                        global clientId
-                        clientId = data[7:]
+                    if str(data[:7]) == "client=": #@! todo: decent parsing function
+                        self.clientId = data[7:]
                         self.setStatusLabel.emit()
 
                     if Dialog.ui.parserCheckbox.isChecked():
                         parser = Dialog.ui.parserText.text()
                         if os.path.isfile(parser):
                             data = data[3:].rstrip()
+                            parserName = parser.rsplit('/', 1)[-1]
                             run = subprocess.run(["python", parser, data], timeout=3, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
+                            
                             if Dialog.ui.parseroutCheckbox.isChecked():
                                 output = run.stdout.decode("ASCII")
+
                                 if output:
-                                    self.consoleWrite.emit("\n" + output)
+                                    self.consoleWrite.emit(parserName + ";\n" + output)
 
                             if Dialog.ui.parsererrCheckbox.isChecked():
                                 output = run.stderr.decode("ASCII")
                                 if output:
-                                    self.consoleWrite.emit("\n" + output)
+                                    self.consoleWrite.emit(parserName + ";\n" + output)
                         else:
                             self.consoleWrite.emit("Error: could not open parser file")
                 except:
@@ -119,142 +91,172 @@ class serialRead(QObject):
 
             elif reconnect and Dialog.ui.reconnectCheckbox.isChecked():
                 time.sleep(5)
-                if not serialState:
+                if not self.serialState:
                     self.connectButton.emit()
 
             time.sleep(0.1)
         self.finished.emit()
 
-class formUpdate(QObject):
-    sendButton = pyqtSignal()
-    connectButton = pyqtSignal()
+class connectTimer(QObject):
+    updateTimer = pyqtSignal()
 
     @pyqtSlot()
-    def send(self): # A slot takes no params
-        self.sendButton.emit()
+    def loop(self):
+        while True:
+            time.sleep(1)
+            self.updateTimer.emit()
+
+class history(QObject):
+    setFieldText = pyqtSignal(object, str)
+
+    def load(self, field, filename, strict = False):
+        self.filename = filename
+        self.strict = strict
+        self.field = field
+        try:
+            with open(filename, 'rb') as f:
+                self.list = pickle.load(f)
+        except:
+            self.list = []
+        self.pos = len(self.list)
+
+    def save(self, command):
+        length = len(self.list)
+        if length > 0:
+
+            fault = False
+            if self.strict:
+                for x in self.list:
+                    if x == command:
+                        fault = True
+
+            if not command == self.list[length-1] and not fault:
+                self.list.append(command)
+
+                if length >= 20: #roll
+                    del self.list[0]
+                self.pos = len(self.list)
+                self.dump()
+        else:
+            self.list.append(command)
+            self.dump()
+
+    def dump(self):
+        try:
+            with open(self.filename, 'wb') as f:
+                pickle.dump(self.list, f)
+        except:
+            print("Could not save pickle " + self.filename)
 
     @pyqtSlot()
-    def connect(self):
-        self.connectButton.emit()
+    def move(self, key):
+        length = len(self.list)
+        if length > 0 and (key == QtCore.Qt.Key_Down or key == QtCore.Qt.Key_Up):
+            if key == QtCore.Qt.Key_Down:
+                self.pos += 1
+            elif key == QtCore.Qt.Key_Up:
+                self.pos -= 1
+
+            if self.pos < 0:
+                self.pos = 0
+            elif self.pos >= length:
+                self.pos = length
+
+            if self.pos == length:
+                self.setFieldText.emit(self.field, "")
+            else:
+                self.setFieldText.emit(self.field, self.list[self.pos])
+
+def loadSettings():
+    f = open('data/settings.yml')
+    dataMap = yaml.safe_load(f)
+    f.close()
+    return dataMap
+
+def saveSettings(settings, device, value):
+    dataMap = loadSettings()
+    f = open('data/settings.yml', "w")
+    dataMap[settings][device] = value
+    yaml.dump(dataMap, f, default_flow_style=False)
+    f.close()
+
+def getInt(value):
+    try:
+        foo = int(value) #int
+    except:
+        try:
+            foo = int(value, 16) #hex
+            if foo > 255:
+                foo = 255
+        except:
+            return False
+    return str(foo)
 
 class initGui(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.form = formUpdate()
-        self.form.connectButton.connect(self.onConnectButton)
-        self.form.sendButton.connect(self.onSendButton)
-
         self.ui = gui.Ui_Dialog()
         self.ui.setupUi(self)
-        self.ui.connectButton.clicked.connect(self.form.connect)
-        self.ui.sendButton.clicked.connect(self.form.send)
-        self.ui.resetButton.clicked.connect(self.onResetButton)
-        self.ui.menuList.selectionModel().selectionChanged.connect(self.menuListEvent)
-
-        self.ui.sendText.keyPressEvent = self.sendTextEvent
-        self.ui.clientText.keyPressEvent = self.clientTextKeyEvent
-        #self.ui.clientText.focusOutEvent = self.clientTextFocusEvent
-        self.ui.clientText.setMaxLength(4)
-        self.ui.sendText.setMaxLength(27) #RH_NRF24_MAX_MESSAGE_LEN = 28
-
-        self.ui.startupCheckbox.clicked.connect(self.autoconnectCheckboxEvent)
-        self.ui.reconnectCheckbox.clicked.connect(self.autoreconnectCheckboxEvent)
-        self.ui.minimizeCheckbox.clicked.connect(self.minimizeCheckboxEvent)
-        self.ui.trayiconCheckbox.clicked.connect(self.trayiconCheckboxEvent)
-        self.ui.lograwCheckbox.clicked.connect(self.rawCheckboxEvent)
-        self.ui.logcsvCheckbox.clicked.connect(self.csvCheckboxEvent)
-        self.ui.parserCheckbox.clicked.connect(self.parserCheckboxEvent)
-        self.ui.savelastCheckbox.clicked.connect(self.savelastCheckboxEvent)
-        self.ui.parseroutCheckbox.clicked.connect(self.parseroutCheckboxEvent)
-        self.ui.parsererrCheckbox.clicked.connect(self.parsererrCheckboxEvent)
-        self.ui.timestampCheckbox.clicked.connect(self.timestampCheckboxEvent)
 
         self.serialread = serialRead()
-        self.serialread.consoleWrite.connect(self.onConsoleWrite)
-        self.serialread.setStatusLabel.connect(self.onSetStatusLabel)
+        self.serialread.serialState = False
+        self.serialread.consoleWrite.connect(self.consoleWrite)
+        self.serialread.setStatusLabel.connect(self.setStatusLabel)
         self.serialread.connectState.connect(self.setConnectState)
-        self.serialread.connectButton.connect(self.onConnectButton)
+        self.serialread.connectButton.connect(self.connectButton)
 
-        self.thread = QThread() #move the Worker object to the Thread object
-        self.thread.started.connect(self.serialread.loop) #init serial read at startup
-        self.serialread.moveToThread(self.thread)
-        self.serialread.finished.connect(self.thread.quit)
-        #self.thread.finished.connect(app.exit)
-        self.thread.start()
+        self.serialThread = QThread() #move the Worker object to the Thread object
+        self.serialThread.started.connect(self.serialread.loop) #init serial read at startup
+        self.serialread.moveToThread(self.serialThread)
+        self.serialread.finished.connect(self.serialThread.quit)
+        self.serialThread.start()
 
-        self.center()
+        self.connectTimer = connectTimer()
+        self.connectTimer.updateTimer.connect(self.updateTimer)
+        self.timerThread = QThread()
+        self.timerThread.started.connect(self.connectTimer.loop)
+        self.connectTimer.moveToThread(self.timerThread)
+        self.timerThread.start()
+
+        self.ui.startupCheckbox.clicked.connect(self.genericCheckboxEvent)
+        self.ui.reconnectCheckbox.clicked.connect(self.genericCheckboxEvent)
+        self.ui.minimizeCheckbox.clicked.connect(self.genericCheckboxEvent)
+        self.ui.savelastCheckbox.clicked.connect(self.genericCheckboxEvent)
+        self.ui.parseroutCheckbox.clicked.connect(self.genericCheckboxEvent)
+        self.ui.parsererrCheckbox.clicked.connect(self.genericCheckboxEvent)
+        self.ui.timestampCheckbox.clicked.connect(self.genericCheckboxEvent)
+
+        self.ui.lograwCheckbox.clicked.connect(self.lograwCheckboxEvent)
+        #self.ui.logcsvCheckbox.clicked.connect(self.logcsvCheckboxEvent)
+        self.ui.parserCheckbox.clicked.connect(self.parserCheckboxEvent)
+        self.ui.trayiconCheckbox.clicked.connect(self.trayiconCheckboxEvent)
+
+        self.ui.connectButton.clicked.connect(self.connectButton)
+        self.ui.collapseButton.clicked.connect(self.collapseButton)
+        self.ui.sendButton.clicked.connect(self.sendButton)
+        self.ui.resetButton.clicked.connect(self.resetButton)
+        self.ui.menuList.selectionModel().selectionChanged.connect(self.menuListEvent)
+        
+        self.ui.clientText.keyPressEvent = self.clientTextEvent
+        self.ui.serverText.keyPressEvent = self.serverTextEvent
+        self.ui.sendText.keyPressEvent = self.sendTextEvent
+        self.ui.parserText.keyPressEvent = self.parserTextEvent
+        self.ui.deviceText.keyPressEvent = self.deviceTextEvent
+        self.ui.baudrateText.keyPressEvent = self.baudrateTextEvent
+        self.ui.lograwText.keyPressEvent = self.lograwTextEvent
+
+        #Center
+        frame = self.frameGeometry()
+        screen = QDesktopWidget().availableGeometry().center()
+        frame.moveCenter(screen)
+        self.move(frame.topLeft())
+
         self.ui.menuList.setFocus()
-
-        if not os.path.isfile("data/settings.yml") or os.stat("data/settings.yml").st_size == 0:
-            dataMap = \
-            {'settings':
-                {
-                    'autoconnect': True,
-                    'autoreconnect': False,
-                    'baudrate': '9600',
-                    'csvlog': False,
-                    'device': '/dev/rf_bridge',
-                    'logcsvfile': './data/log.csv',
-                    'lograwfile': './data/log.txt',
-                    'parser': True,
-                    'parserfile': './parser/media.py',
-                    'parserstdout': True,
-                    'parserstderr': True,
-                    'rawlog': False,
-                    'savelastconnection': True,
-                    'startminimized': False,
-                    'trayicon': True,
-                    'timestamp': True
-                }
-            }
-
-            f = open('data/settings.yml', "w")
-            yaml.dump(dataMap, f, default_flow_style=False)
-            f.close()
-
-        settings = loadSettings()
-        if settings["settings"]["autoconnect"]:
-            self.ui.startupCheckbox.setChecked(True)
-
-        if settings["settings"]["autoreconnect"]:
-            self.ui.reconnectCheckbox.setChecked(True)
-
-        if settings["settings"]["savelastconnection"]:
-            self.ui.savelastCheckbox.setChecked(True)
-
-        if settings["settings"]["startminimized"]:
-            self.ui.minimizeCheckbox.setChecked(True)
-
-        if settings["settings"]["trayicon"]:
-            self.ui.trayiconCheckbox.setChecked(True)
-
-        if settings["settings"]["csvlog"]:
-            self.ui.logcsvCheckbox.setChecked(True)
-            self.ui.logcsvText.setEnabled(False)
-
-        if settings["settings"]["rawlog"]:
-            self.ui.lograwCheckbox.setChecked(True)
-            self.ui.lograwText.setEnabled(False)
-
-        if settings["settings"]["parser"]:
-            self.ui.parserCheckbox.setChecked(True)
-            self.ui.parserText.setEnabled(False)
-
-        if settings["settings"]["parserstdout"]:
-            self.ui.parseroutCheckbox.setChecked(True)
-
-        if settings["settings"]["parserstderr"]:
-            self.ui.parsererrCheckbox.setChecked(True)
-
-        if settings["settings"]["timestamp"]:
-            self.ui.timestampCheckbox.setChecked(True)
-
-        self.ui.deviceText.setText(settings["settings"]["device"])
-        self.ui.baudrateText.setText(settings["settings"]["baudrate"])
-        self.ui.baudrateText.setText(settings["settings"]["baudrate"])
-        self.ui.lograwText.setText(settings["settings"]["lograwfile"])
-        self.ui.logcsvText.setText(settings["settings"]["logcsvfile"])
-        self.ui.parserText.setText(settings["settings"]["parserfile"])
+        self.ui.clientText.setMaxLength(4)
+        self.ui.serverText.setMaxLength(4)
+        self.ui.sendText.setMaxLength(27) #RH_NRF24_MAX_MESSAGE_LEN = 28
+        self.applySettings()
+        self.loadHistory()
 
         icon = QtGui.QIcon('./gui/trayicon.svg')
         self.trayIcon = QSystemTrayIcon(self)
@@ -265,70 +267,149 @@ class initGui(QtWidgets.QMainWindow):
             self.trayIcon.show()
 
         if self.ui.startupCheckbox.isChecked():
-            self.onConnectButton()
+            self.connectButton()
 
-    def clientTextKeyEvent(self, event):
+    #Load settings and history
+    def applySettings(self):
+        if not os.path.isfile("data/settings.yml") or os.stat("data/settings.yml").st_size == 0:
+            dataMap = \
+            {'settings':
+                {
+                    'baudrateText': '9600',
+                    #'logcsvCheckbox': False,
+                    'collapse': False,
+                    'deviceText': '/dev/rf_bridge',
+                    #'logcsvText': './data/log.csv',
+                    'lograwText': './data/log.txt',
+                    'parserCheckbox': True,
+                    'parserText': './parser/media.py',
+                    'lograwCheckbox': False,
+                    'trayiconCheckbox': True,
+                    'startupCheckbox': True,
+                    'reconnectCheckbox': True,
+                    'savelastCheckbox': True,
+                    'minimizeCheckbox': False,
+                    'parseroutCheckbox': True,
+                    'parsererrCheckbox': True,
+                    'timestampCheckbox': True
+                }
+            }
+
+            f = open('data/settings.yml', "w")
+            yaml.dump(dataMap, f, default_flow_style=False)
+            f.close()
+
+        settings = loadSettings()
+        if settings["settings"]["startupCheckbox"]:
+            self.ui.startupCheckbox.setChecked(True)
+
+        if settings["settings"]["reconnectCheckbox"]:
+            self.ui.reconnectCheckbox.setChecked(True)
+
+        if settings["settings"]["savelastCheckbox"]:
+            self.ui.savelastCheckbox.setChecked(True)
+
+        if settings["settings"]["minimizeCheckbox"]:
+            self.ui.minimizeCheckbox.setChecked(True)
+
+        if settings["settings"]["parseroutCheckbox"]:
+            self.ui.parseroutCheckbox.setChecked(True)
+
+        if settings["settings"]["parsererrCheckbox"]:
+            self.ui.parsererrCheckbox.setChecked(True)
+
+        if settings["settings"]["timestampCheckbox"]:
+            self.ui.timestampCheckbox.setChecked(True)
+
+        if settings["settings"]["trayiconCheckbox"]:
+            self.ui.trayiconCheckbox.setChecked(True)
+
+        #if settings["settings"]["logcsvCheckbox"]:
+        #    self.ui.logcsvCheckbox.setChecked(True)
+        #    self.ui.logcsvText.setEnabled(False)
+
+        if settings["settings"]["lograwCheckbox"]:
+            self.ui.lograwCheckbox.setChecked(True)
+            self.ui.lograwText.setEnabled(False)
+
+        if settings["settings"]["parserCheckbox"]:
+            self.ui.parserCheckbox.setChecked(True)
+            self.ui.parserText.setEnabled(False)
+
+        self.ui.deviceText.setText(settings["settings"]["deviceText"])
+        self.ui.baudrateText.setText(settings["settings"]["baudrateText"])
+        self.ui.baudrateText.setText(settings["settings"]["baudrateText"])
+        self.ui.lograwText.setText(settings["settings"]["lograwText"])
+        #self.ui.logcsvText.setText(settings["settings"]["logcsvText"])
+        self.ui.parserText.setText(settings["settings"]["parserText"])
+
+    def loadHistory(self):
+        self.sendTextHist = history()
+        self.sendTextHist.load(self.ui.sendText, "./data/commands.pkl")
+        self.sendTextHist.setFieldText.connect(self.setFieldText)
+
+        self.deviceTextHist = history()
+        self.deviceTextHist.load(self.ui.deviceText, "./data/devices.pkl",True)
+        self.deviceTextHist.setFieldText.connect(self.setFieldText)
+
+        self.baudrateTextHist = history()
+        self.baudrateTextHist.load(self.ui.baudrateText, "./data/baudrates.pkl",True)
+        self.baudrateTextHist.setFieldText.connect(self.setFieldText)
+
+        self.parserTextHist = history()
+        self.parserTextHist.load(self.ui.parserText, "./data/parsers.pkl",True)
+        self.parserTextHist.setFieldText.connect(self.setFieldText)
+
+        self.lograwTextHist = history()
+        self.lograwTextHist.load(self.ui.lograwText, "./data/rawlogs.pkl",True)
+        self.lograwTextHist.setFieldText.connect(self.setFieldText)
+
+        self.clientTextHist = history()
+        self.clientTextHist.load(self.ui.clientText, "./data/clients.pkl",True)
+        self.clientTextHist.setFieldText.connect(self.setFieldText)
+
+        self.serverTextHist = history()
+        self.serverTextHist.load(self.ui.serverText, "./data/servers.pkl",True)
+        self.serverTextHist.setFieldText.connect(self.setFieldText)
+    
+    #Form actions
+    def clientTextEvent(self, event):
+        self.clientTextHist.move(event.key())
         if event.key() == QtCore.Qt.Key_Return and self.ui.clientText.text():
-            try:
-                client = self.ui.clientText.text()
-                foo = int(client, 0) #if int or hex #@! replace by regex
-                if foo > 255:
-                    foo = 255
-                self.ui.clientText.setText(str(foo))
+
+            client = getInt(self.ui.clientText.text())
+            if client:
+                self.ui.clientText.setText(client)
 
                 if self.ui.clientText.text():
                     cmd = "setclient "+self.ui.clientText.text()
                     self.ui.sendText.setText(cmd)
-                    self.ui.clientText.clear()
-                    self.onSendButton()
+                    self.sendButton()
                 elif not self.ui.clientText.text():
                     self.ui.sendText.setText("pairing")
-                    self.onSendButton()
-            except:
-                self.onConsoleWrite("Error: invalid client address, expected int or hex value")
+                    self.sendButton()
+                self.clientTextHist.save(self.ui.clientText.text())
+                self.ui.clientText.clear()
+            else:
+                self.consoleWrite("Error: invalid client address, expected int or hex value")
 
         QtWidgets.QLineEdit.keyPressEvent(self.ui.clientText, event)
 
-    def sendTextEvent(self, event):
-        global histList, histPos
+    def serverTextEvent(self, event): #@! todo
+        self.serverTextHist.move(event.key())
 
-        key = event.key()
-        histLen = len(histList)
-        if histLen > 0 and (key == QtCore.Qt.Key_Down or key == QtCore.Qt.Key_Up):
-            if key == QtCore.Qt.Key_Down:
-                histPos += 1
-            elif key == QtCore.Qt.Key_Up:
-                histPos -= 1
-
-            if histPos < 0:
-                histPos = 0
-            elif histPos >= histLen:
-                histPos = histLen
-
-            if histPos == histLen:
-                self.ui.sendText.setText("")
+        if event.key() == QtCore.Qt.Key_Return and self.ui.serverText.text():
+            server = getInt(self.ui.serverText.text())
+            if server:
+                print(server)
+                self.serverTextHist.save(self.ui.serverText.text())
+                self.ui.serverText.clear()
             else:
-                self.ui.sendText.setText(histList[histPos])
+                self.consoleWrite("Error: invalid server address, expected int or hex value")
 
-        QtWidgets.QLineEdit.keyPressEvent(self.ui.sendText, event)
+        QtWidgets.QLineEdit.keyPressEvent(self.ui.serverText, event)
 
-    def trayClickEvent(self, click):
-        if click == 3: #left
-            if self.isVisible():
-                self.hide()
-            else:
-                self.show()
-
-        elif click == 1: #right
-            app.exit()
-
-    def center(self):
-        frame = self.frameGeometry()
-        screen = QDesktopWidget().availableGeometry().center()
-        frame.moveCenter(screen)
-        self.move(frame.topLeft())
-
-    def onConsoleWrite(self, i):
+    def consoleWrite(self, i):
         if self.ui.timestampCheckbox.isChecked():
             txt = strftime("[%H:%M:%S")+"] "+str(i)
         else:
@@ -345,139 +426,169 @@ class initGui(QtWidgets.QMainWindow):
             except:
                 self.ui.consoleText.append("Error: could not open raw logfile ("+filename+")")
 
-    def onSendButton(self):
-        global serialState, ser, histList, histPos
+    def sendButton(self):
         command = self.ui.sendText.text()
-        if serialState and command:
 
-            histLen = len(histList)
-            if histLen > 0:
-                if not command == histList[histLen-1]:
-                    histList.append(command)
-                    if histLen > 20:
-                        del histList[0]
-                    histPos = len(histList)
-                    try:
-                        with open('data/histList.pkl', 'wb') as f:
-                            pickle.dump(histList, f)
-                    except:
-                        print("Could not save pickle")
-            else:
-                histList.append(command)
-
+        if self.serialread.serialState and command:
+            self.sendTextHist.save(command)
             cmd = command + "\n"
-            ser.write(cmd.encode())
+            self.serialread.ser.write(cmd.encode())
             self.ui.sendText.clear()
 
-    def onResetButton(self):
-        global serialState, ser
-        if serialState:
-            ser.setDTR(False)
+    def resetButton(self):
+        if self.serialread.serialState:
+            self.serialread.ser.setDTR(False)
             time.sleep(0.022)
-            ser.setDTR(True)
+            self.serialread.ser.setDTR(True)
 
-    def onConnectButton(self):
+    def collapseButton(self):
+        height = Dialog.frameGeometry().height()
+        if height < 600:
+            Dialog.setFixedHeight(600)
+            saveSettings("settings", "collapse", False)
+        else:
+            Dialog.setFixedHeight(330)
+            saveSettings("settings", "collapse", True)
+
+    def connectButton(self):
         device = self.ui.deviceText.text()
         baudrate = self.ui.baudrateText.text()
-        global serialState, ser
 
-        if serialState:
-            ser.close()
+        if self.serialread.serialState:
             self.setConnectState("Disconnected")
         else:
             try:
-                ser = serial.Serial(device, baudrate)
-                self.onConsoleWrite("Connecting to " + device + " (" + baudrate + ")...")
-                serialState = True
+                self.serialread.ser = serial.Serial(device, baudrate)
+                self.consoleWrite("Connecting to " + device + " (" + baudrate + ")...")
+                self.serialread.serialState = True
 
                 #Send reset signal to AVR
-                ser.setDTR(False)
+                self.serialread.ser.setDTR(False)
                 time.sleep(0.022)
-                ser.setDTR(True)
+                self.serialread.ser.setDTR(True)
 
                 self.setConnectState("Connected")
 
                 if self.ui.savelastCheckbox.isChecked():
-                    saveSettings("settings", "device", device)
-                    saveSettings("settings", "baudrate", baudrate)
+                    saveSettings("settings", "deviceText", device)
+                    saveSettings("settings", "baudrateText", baudrate)
+                self.deviceTextHist.save(device)
+                self.baudrateTextHist.save(baudrate)
 
             except serial.serialutil.SerialException:
                 portsList = "Error: connection failed, available devices: " + str(portsEnumerate())
-                self.onConsoleWrite(portsList)
-                serialState = False
+                self.consoleWrite(portsList)
+                self.serialread.serialState = False
+
+    def setStatusLabel(self):
+        if self.serialread.serialState:
+            self.ui.clientLabel.setText("Client address (0x" + self.serialread.clientId + ")")
+            self.ui.serverLabel.setText("Server address (0x00)") #@!
+
+            saveSettings("settings", "clientId", self.serialread.clientId)
+        else:
+            self.ui.statusLabel.setText("Disconnected")
+
+    def updateTimer(self):
+        if self.serialread.serialState:
+            elapsed = time.time() - self.startTime
+            m, s = divmod(elapsed, 60)
+            h, m = divmod(m, 60)
+            elapsed = "%02d:%02d:%02d" % (h, m, s)
+            self.ui.statusLabel.setText("Connected, " + elapsed+ "")
+        else:
+            self.ui.statusLabel.setText("Disconnected")
 
     def setConnectState(self, i):
-        global serialState, ser
-
         if i == "Connected":
-            serialState = True
+            self.serialread.serialState = True
             self.ui.sendButton.setEnabled(True)
             self.ui.connectButton.setText("Disconnect")
+            self.startTime = time.time()
         else:
-            serialState = False
+            self.serialread.serialState = False
             self.ui.sendButton.setEnabled(False)
             self.ui.connectButton.setText("Connect")
-            self.onConsoleWrite(i)
-            ser.close()
-        self.onSetStatusLabel()
+            self.consoleWrite(i)
+            self.serialread.ser.close()
+        self.setStatusLabel()
 
-    def onSetStatusLabel(self):
-        global serialState, clientId
-        if serialState:
-            self.ui.statusLabel.setText("Connected (0x"+clientId+")")
-            saveSettings("settings", "clientId", clientId)
-        else:
-            self.ui.statusLabel.setText("Disconnected (0x"+clientId+")")
+    def trayClickEvent(self, click):
+        if click == 3: #left
+            if self.isVisible():
+                self.hide()
+            else:
+                self.show()
+
+        elif click == 1: #right
+            app.exit()
 
     def menuListEvent(self):
         self.ui.stackedWidget.setCurrentIndex(self.ui.menuList.currentRow())
 
-    def csvCheckboxEvent(self):
-        saveSettings("settings", "csvlog", self.ui.logcsvCheckbox.isChecked())
-        self.ui.logcsvText.setEnabled(not self.ui.logcsvCheckbox.isChecked())
+    #History
+    def setFieldText(self, field, text):
+        field.setText(text)
 
-    def rawCheckboxEvent(self):
-        saveSettings("settings", "rawlog", self.ui.lograwCheckbox.isChecked())
-        self.ui.lograwText.setEnabled(not self.ui.lograwCheckbox.isChecked())
+    def sendTextEvent(self, event): #@! redundant
+        self.sendTextHist.move(event.key())
+        QtWidgets.QLineEdit.keyPressEvent(self.ui.sendText, event)
 
-    def timestampCheckboxEvent(self):
-        saveSettings("settings", "timestamp", self.ui.timestampCheckbox.isChecked())
+    def parserTextEvent(self, event):
+        self.parserTextHist.move(event.key())
+        QtWidgets.QLineEdit.keyPressEvent(self.ui.parserText, event)
 
-    def parseroutCheckboxEvent(self):
-        saveSettings("settings", "parserstdout", self.ui.parseroutCheckbox.isChecked())
+    def deviceTextEvent(self, event):
+        self.deviceTextHist.move(event.key())
+        QtWidgets.QLineEdit.keyPressEvent(self.ui.deviceText, event)
 
-    def parsererrCheckboxEvent(self):
-        saveSettings("settings", "parserstderr", self.ui.parsererrCheckbox.isChecked())
+    def baudrateTextEvent(self, event):
+        self.baudrateTextHist.move(event.key())
+        QtWidgets.QLineEdit.keyPressEvent(self.ui.baudrateText, event)
 
-    def parserCheckboxEvent(self):
-        saveSettings("settings", "parser", self.ui.parserCheckbox.isChecked())
-        self.ui.parserText.setEnabled(not self.ui.parserCheckbox.isChecked())
+    def lograwTextEvent(self, event):
+        self.lograwTextHist.move(event.key())
+        QtWidgets.QLineEdit.keyPressEvent(self.ui.lograwText, event)
 
-    def autoconnectCheckboxEvent(self):
-        saveSettings("settings", "autoconnect", self.ui.startupCheckbox.isChecked())
-
-    def autoreconnectCheckboxEvent(self):
-        saveSettings("settings", "autoreconnect", self.ui.reconnectCheckbox.isChecked())
-
-    def savelastCheckboxEvent(self):
-        saveSettings("settings", "savelastconnection", self.ui.savelastCheckbox.isChecked())
-
-    def minimizeCheckboxEvent(self):
-        saveSettings("settings", "startminimized", self.ui.minimizeCheckbox.isChecked())
+    #YAML
+    def genericCheckboxEvent(self):
+        saveSettings("settings", self.sender().objectName(), self.sender().isChecked())
 
     def trayiconCheckboxEvent(self):
-        saveSettings("settings", "trayicon", self.ui.trayiconCheckbox.isChecked())
+        saveSettings("settings", "trayiconCheckbox", self.ui.trayiconCheckbox.isChecked())
         self.trayIcon.setVisible(not self.trayIcon.isVisible())
         self.ui.hideButton.setEnabled(self.ui.trayiconCheckbox.isChecked())
+
+    #def logcsvCheckboxEvent(self):
+    #    saveSettings("settings", "logcsvCheckbox", self.ui.logcsvCheckbox.isChecked())
+    #    self.ui.logcsvText.setEnabled(not self.ui.logcsvCheckbox.isChecked())
+
+    def lograwCheckboxEvent(self):
+        saveSettings("settings", "lograwCheckbox", self.ui.lograwCheckbox.isChecked())
+        self.ui.lograwText.setEnabled(not self.ui.lograwCheckbox.isChecked())
+        if self.ui.lograwCheckbox.isChecked():
+            self.lograwTextHist.save(self.ui.lograwText.text())
+
+    def parserCheckboxEvent(self):
+        saveSettings("settings", "parserCheckbox", self.ui.parserCheckbox.isChecked())
+        self.ui.parserText.setEnabled(not self.ui.parserCheckbox.isChecked())
+
+        parser = self.ui.parserText.text()
+        if parser and self.ui.parserCheckbox.isChecked():
+            self.parserTextHist.save(parser)
 
 if __name__== '__main__':
     app = QtWidgets.QApplication(sys.argv)
     Dialog = initGui()
 
-    sshFile = "./gui/gui.css"
-    with open(sshFile, "r") as fh:
+    settings = loadSettings()
+    if settings["settings"]["collapse"]:
+        Dialog.setFixedHeight(330)
+
+    with open("./gui/gui.css", "r") as fh:
         Dialog.setStyleSheet(fh.read())
 
-    if not Dialog.ui.minimizeCheckbox.isChecked():
+    if not Dialog.ui.trayiconCheckbox.isChecked() or not Dialog.ui.minimizeCheckbox.isChecked():
         Dialog.show()
+
     sys.exit(app.exec_())
