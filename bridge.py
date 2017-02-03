@@ -295,7 +295,10 @@ class initGui(QtWidgets.QMainWindow):
                 }
             }
 
-            f = open('data/settings.yml', "w")
+            if not os.path.exists("data"):
+                os.makedirs("data")
+
+            f = open("data/settings.yml", "w")
             yaml.dump(dataMap, f, default_flow_style=False)
             f.close()
 
