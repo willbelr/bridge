@@ -1,7 +1,7 @@
 # Bridge
 Bridge is a python application allowing to communicate and interact with various radio devices. Parsing modules are easily added to suit differents needs. As a starter, two parser exemples are provided. They are used to control media applications from a nrf24 remote (see https://github.com/willbelr/rf_remote).
 
-![alt tag](https://raw.githubusercontent.com/willbelr/rf_bridge/master/pictures/GUI.png)
+![alt tag](https://raw.githubusercontent.com/willbelr/rf_bridge/master/pictures/gui.png)
 
 # Dependencies
 	Require python 3 and modules pyqt5, qt5-svg, pyserial, yaml
