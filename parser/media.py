@@ -1,9 +1,8 @@
 #!/usr/bin/python3
-import sys
 import subprocess
+import urllib.request
+import sys
 import re
-import time
-import daemon
 
 def is_running(process):
 	s = subprocess.Popen(["ps", "-eo", "comm"],stdout=subprocess.PIPE)
@@ -19,44 +18,47 @@ def parse(data):
 		subprocess.run(["amixer", "set", "Master", "3%-", "unmute"])
 
 	else:
-		if is_running('chrome'):
+		if is_running('vlc'): #VLC mode
+			try:
+				if data == "Z":
+					urllib.request.urlopen('http://127.0.0.1:8080/requests/status.xml?command=pl_pause')
+
+				elif data == "L":
+					urllib.request.urlopen('http://127.0.0.1:8080/requests/status.xml?command=seek&val=-5')
+
+				elif data == "R":
+					urllib.request.urlopen('http://127.0.0.1:8080/requests/status.xml?command=seek&val=+5')
+			except urllib.error.URLError:
+				print("Error: VLC web interface is disabled")
+
+		elif is_running('chrome'): #Netflix mode (assuming Chromium is used for browsing, and Google-Chrome ('chrome') is only used for Netflix)
 			if data == "Z":
 				subprocess.run(["xdotool", "search", "--onlyvisible", "--class", "Chrome", "windowfocus", "key", "Return"])
-				time.sleep(0.5)
 
 			elif data == "L":
 				subprocess.run(["xdotool","key","shift+Tab"])
-				time.sleep(0.1)
 
 			elif data == "R":
 				subprocess.run(["xdotool","key","Tab"])
-				time.sleep(0.1)
 
-			elif data == "N":
-				subprocess.run(["bash", "-c", "/home/will/scripts/pc/display-default.sh"])
-				time.sleep(1.5)
+			elif data == "H":
+				subprocess.run(["bash", "-c", "/home/will/scripts/pc/display-default.sh"]) #Restore default display settings
 
-		else:
+		else: #Music mode
 			if not is_running('foobar2000.exe') and (data == "Z" or data == "L" or data == "R"):
-				with daemon.DaemonContext():
-					subprocess.run(["wine", "/home/will/.foobar2000/foobar2000.exe", "/play"])
+				subprocess.run(["wine", "/home/will/.foobar2000/foobar2000.exe", "/play"], stdout=False, stderr=False)
 
 			elif data == "Z":
 				subprocess.run(["wine", "/home/will/.foobar2000/foobar2000.exe", "/pause"])
-				time.sleep(0.3)
 
 			elif data == "L":
 				subprocess.run(["wine", "/home/will/.foobar2000/foobar2000.exe", "/prev"])
-				time.sleep(0.3)
 
 			elif data == "R":
-				subprocess.run(["wine", "/home/will/.foobar2000/foobar2000.exe", "/rand"])
-				time.sleep(0.3)
-			
-			elif data == "N":
-				print("b")
-				subprocess.run(["bash", "-c", "/home/will/scripts/pc/netflix.sh"])
-				time.sleep(1.5)	
+				subprocess.run(["wine", "/home/will/.foobar2000/foobar2000.exe", "/next"]) #/rand
+
+			elif data == "H":
+				subprocess.run(["bash", "-c", "/home/will/scripts/pc/netflix.sh"]) #Switch display to TV, open new chrome session...
 
 if __name__ == "__main__":
 	cmd = str(sys.argv[1])
