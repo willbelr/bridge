@@ -69,7 +69,7 @@ class serialRead(QObject):
                         if os.path.isfile(parser):
                             data = data[3:].rstrip()
                             parserName = parser.rsplit('/', 1)[-1]
-                            run = subprocess.run(["python", parser, data], timeout=3, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            run = subprocess.run(["python", parser, data], timeout=5, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                             
                             if Dialog.ui.parseroutCheckbox.isChecked():
                                 output = run.stdout.decode("ASCII")
@@ -168,14 +168,16 @@ class history(QObject):
                 self.setFieldText.emit(self.field, self.list[self.pos])
 
 def loadSettings():
-    f = open('data/settings.yml')
+    selfPath = os.path.dirname(os.path.realpath(__file__))
+    f = open(selfPath + '/data/settings.yml')
     dataMap = yaml.safe_load(f)
     f.close()
     return dataMap
 
 def saveSettings(settings, device, value):
+    selfPath = os.path.dirname(os.path.realpath(__file__))
     dataMap = loadSettings()
-    f = open('data/settings.yml', "w")
+    f = open(selfPath + '/data/settings.yml', "w")
     dataMap[settings][device] = value
     yaml.dump(dataMap, f, default_flow_style=False)
     f.close()
@@ -258,7 +260,7 @@ class initGui(QtWidgets.QMainWindow):
         self.applySettings()
         self.loadHistory()
 
-        icon = QtGui.QIcon('./gui/trayicon.svg')
+        icon = QtGui.QIcon(os.path.dirname(os.path.realpath(__file__)) + '/gui/trayicon.svg')
         self.trayIcon = QSystemTrayIcon(self)
         self.trayIcon.setIcon(icon)
         self.trayIcon.activated.connect(self.trayClickEvent)
@@ -271,7 +273,8 @@ class initGui(QtWidgets.QMainWindow):
 
     #Load settings and history
     def applySettings(self):
-        if not os.path.isfile("data/settings.yml") or os.stat("data/settings.yml").st_size == 0:
+        selfPath = os.path.dirname(os.path.realpath(__file__))
+        if not os.path.isfile(selfPath + "/data/settings.yml") or os.stat(selfPath + "/data/settings.yml").st_size == 0:
             dataMap = \
             {'settings':
                 {
@@ -279,10 +282,10 @@ class initGui(QtWidgets.QMainWindow):
                     #'logcsvCheckbox': False,
                     'collapse': False,
                     'deviceText': '/dev/rf_bridge',
-                    #'logcsvText': './data/log.csv',
-                    'lograwText': './data/log.txt',
+                    #'logcsvText': os.path.dirname(os.path.realpath(__file__)) + '/data/log.csv',
+                    'lograwText': selfPath + '/data/log.txt',
                     'parserCheckbox': True,
-                    'parserText': './parser/media.py',
+                    'parserText': selfPath + '/parser/media.py',
                     'lograwCheckbox': False,
                     'trayiconCheckbox': True,
                     'startupCheckbox': True,
@@ -347,32 +350,34 @@ class initGui(QtWidgets.QMainWindow):
         self.ui.parserText.setText(settings["settings"]["parserText"])
 
     def loadHistory(self):
+        selfPath = os.path.dirname(os.path.realpath(__file__))
+
         self.sendTextHist = history()
-        self.sendTextHist.load(self.ui.sendText, "./data/commands.pkl")
+        self.sendTextHist.load(self.ui.sendText, selfPath + "/data/commands.pkl")
         self.sendTextHist.setFieldText.connect(self.setFieldText)
 
         self.deviceTextHist = history()
-        self.deviceTextHist.load(self.ui.deviceText, "./data/devices.pkl",True)
+        self.deviceTextHist.load(self.ui.deviceText, selfPath + "/data/devices.pkl",True)
         self.deviceTextHist.setFieldText.connect(self.setFieldText)
 
         self.baudrateTextHist = history()
-        self.baudrateTextHist.load(self.ui.baudrateText, "./data/baudrates.pkl",True)
+        self.baudrateTextHist.load(self.ui.baudrateText, selfPath + "/data/baudrates.pkl",True)
         self.baudrateTextHist.setFieldText.connect(self.setFieldText)
 
         self.parserTextHist = history()
-        self.parserTextHist.load(self.ui.parserText, "./data/parsers.pkl",True)
+        self.parserTextHist.load(self.ui.parserText, selfPath + "/data/parsers.pkl",True)
         self.parserTextHist.setFieldText.connect(self.setFieldText)
 
         self.lograwTextHist = history()
-        self.lograwTextHist.load(self.ui.lograwText, "./data/rawlogs.pkl",True)
+        self.lograwTextHist.load(self.ui.lograwText, selfPath + "/data/rawlogs.pkl",True)
         self.lograwTextHist.setFieldText.connect(self.setFieldText)
 
         self.clientTextHist = history()
-        self.clientTextHist.load(self.ui.clientText, "./data/clients.pkl",True)
+        self.clientTextHist.load(self.ui.clientText, selfPath + "/data/clients.pkl",True)
         self.clientTextHist.setFieldText.connect(self.setFieldText)
 
         self.serverTextHist = history()
-        self.serverTextHist.load(self.ui.serverText, "./data/servers.pkl",True)
+        self.serverTextHist.load(self.ui.serverText, selfPath + "/data/servers.pkl",True)
         self.serverTextHist.setFieldText.connect(self.setFieldText)
     
     #Form actions
@@ -588,7 +593,7 @@ if __name__== '__main__':
     if settings["settings"]["collapse"]:
         Dialog.setFixedHeight(330)
 
-    with open("./gui/gui.css", "r") as fh:
+    with open(os.path.dirname(os.path.realpath(__file__)) + "/gui/gui.css", "r") as fh:
         Dialog.setStyleSheet(fh.read())
 
     if not Dialog.ui.trayiconCheckbox.isChecked() or not Dialog.ui.minimizeCheckbox.isChecked():
