@@ -20,7 +20,7 @@ def parse(data):
 	else:
 		if is_running('vlc'): #VLC mode
 			try:
-				if data == "Z":
+				if data == "B2":
 					urllib.request.urlopen('http://127.0.0.1:8080/requests/status.xml?command=pl_pause')
 
 				elif data == "L":
@@ -32,7 +32,7 @@ def parse(data):
 				print("Error: VLC web interface is disabled")
 
 		elif is_running('chrome'): #Netflix mode (assuming Chromium is used for browsing, and Google-Chrome ('chrome') is only used for Netflix)
-			if data == "Z":
+			if data == "B2":
 				subprocess.run(["xdotool", "search", "--onlyvisible", "--class", "Chrome", "windowfocus", "key", "Return"])
 
 			elif data == "L":
@@ -45,10 +45,10 @@ def parse(data):
 				subprocess.run(["bash", "-c", "/home/will/scripts/pc/display-default.sh"]) #Restore default display settings
 
 		else: #Music mode
-			if not is_running('foobar2000.exe') and (data == "Z" or data == "L" or data == "R"):
+			if not is_running('foobar2000.exe') and (data == "B2" or data == "L" or data == "R"):
 				subprocess.run(["wine", "/home/will/.foobar2000/foobar2000.exe", "/play"], stdout=False, stderr=False)
 
-			elif data == "Z":
+			elif data == "B2":
 				subprocess.run(["wine", "/home/will/.foobar2000/foobar2000.exe", "/pause"])
 
 			elif data == "L":

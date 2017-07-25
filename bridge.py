@@ -4,11 +4,8 @@ import glob
 import sys
 import os
 import subprocess
-import pickle
-import yaml
+import json
 import time
-from time import strftime
-
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import QThread, QObject, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import QSystemTrayIcon, QDesktopWidget
@@ -109,14 +106,18 @@ class connectTimer(QObject):
 class history(QObject):
     setFieldText = pyqtSignal(object, str)
 
-    def load(self, field, filename, strict = False):
-        self.filename = filename
+    def load(self, field, entry, strict):
+        selfPath = os.path.dirname(os.path.realpath(__file__))
+        self.historyFile = selfPath + '/data/history.json'
         self.strict = strict
         self.field = field
+        self.entry = entry
         try:
-            with open(filename, 'rb') as f:
-                self.list = pickle.load(f)
+            with open(self.historyFile) as f:
+                self.tree = json.load(f)
+                self.list = self.tree[entry]
         except:
+            self.tree = {}
             self.list = []
         self.pos = len(self.list)
 
@@ -143,10 +144,14 @@ class history(QObject):
 
     def dump(self):
         try:
-            with open(self.filename, 'wb') as f:
-                pickle.dump(self.list, f)
+            with open(self.historyFile, 'r') as f:
+                self.tree = json.load(f)
         except:
-            print("Could not save pickle " + self.filename)
+            self.tree = {}
+
+        with open(self.historyFile, 'w+') as f:
+            self.tree[self.entry] = self.list
+            f.write(json.dumps(self.tree, indent=2, sort_keys=False))
 
     @pyqtSlot()
     def move(self, key):
@@ -169,17 +174,17 @@ class history(QObject):
 
 def loadSettings():
     selfPath = os.path.dirname(os.path.realpath(__file__))
-    f = open(selfPath + '/data/settings.yml')
-    dataMap = yaml.safe_load(f)
-    f.close()
+    with open(selfPath + '/data/settings.json') as f:
+        dataMap = json.load(f)
     return dataMap
 
 def saveSettings(settings, device, value):
     selfPath = os.path.dirname(os.path.realpath(__file__))
     dataMap = loadSettings()
-    f = open(selfPath + '/data/settings.yml', "w")
     dataMap[settings][device] = value
-    yaml.dump(dataMap, f, default_flow_style=False)
+    with open(selfPath + '/data/settings.json', "w+") as f:
+        f.write(json.dumps(dataMap, indent=2, sort_keys=False))
+
     f.close()
 
 def getInt(value):
@@ -194,7 +199,7 @@ def getInt(value):
             return False
     return str(foo)
 
-class initGui(QtWidgets.QMainWindow):
+class initGui(QtWidgets.QDialog):
     def __init__(self):
         super().__init__()
         self.ui = gui.Ui_Dialog()
@@ -228,13 +233,10 @@ class initGui(QtWidgets.QMainWindow):
         self.ui.parsererrCheckbox.clicked.connect(self.genericCheckboxEvent)
         self.ui.timestampCheckbox.clicked.connect(self.genericCheckboxEvent)
 
-        self.ui.lograwCheckbox.clicked.connect(self.lograwCheckboxEvent)
-        #self.ui.logcsvCheckbox.clicked.connect(self.logcsvCheckboxEvent)
         self.ui.parserCheckbox.clicked.connect(self.parserCheckboxEvent)
         self.ui.trayiconCheckbox.clicked.connect(self.trayiconCheckboxEvent)
 
         self.ui.connectButton.clicked.connect(self.connectButton)
-        self.ui.collapseButton.clicked.connect(self.collapseButton)
         self.ui.sendButton.clicked.connect(self.sendButton)
         self.ui.resetButton.clicked.connect(self.resetButton)
         self.ui.menuList.selectionModel().selectionChanged.connect(self.menuListEvent)
@@ -245,13 +247,12 @@ class initGui(QtWidgets.QMainWindow):
         self.ui.parserText.keyPressEvent = self.parserTextEvent
         self.ui.deviceText.keyPressEvent = self.deviceTextEvent
         self.ui.baudrateText.keyPressEvent = self.baudrateTextEvent
-        self.ui.lograwText.keyPressEvent = self.lograwTextEvent
 
         #Center
-        frame = self.frameGeometry()
-        screen = QDesktopWidget().availableGeometry().center()
-        frame.moveCenter(screen)
-        self.move(frame.topLeft())
+        #frame = self.frameGeometry()
+        #screen = QDesktopWidget().availableGeometry().center()
+        #frame.moveCenter(screen)
+        #self.move(frame.topLeft())
 
         self.ui.menuList.setFocus()
         self.ui.clientText.setMaxLength(4)
@@ -274,19 +275,14 @@ class initGui(QtWidgets.QMainWindow):
     #Load settings and history
     def applySettings(self):
         selfPath = os.path.dirname(os.path.realpath(__file__))
-        if not os.path.isfile(selfPath + "/data/settings.yml") or os.stat(selfPath + "/data/settings.yml").st_size == 0:
+        if not os.path.isfile(selfPath + "/data/settings.json") or os.stat(selfPath + "/data/settings.json").st_size == 0:
             dataMap = \
             {'settings':
                 {
                     'baudrateText': '9600',
-                    #'logcsvCheckbox': False,
-                    'collapse': False,
                     'deviceText': '/dev/rf_bridge',
-                    #'logcsvText': os.path.dirname(os.path.realpath(__file__)) + '/data/log.csv',
-                    'lograwText': selfPath + '/data/log.txt',
                     'parserCheckbox': True,
                     'parserText': selfPath + '/parser/media.py',
-                    'lograwCheckbox': False,
                     'trayiconCheckbox': True,
                     'startupCheckbox': True,
                     'reconnectCheckbox': True,
@@ -298,12 +294,11 @@ class initGui(QtWidgets.QMainWindow):
                 }
             }
 
-            if not os.path.exists("data"):
-                os.makedirs("data")
+            if not os.path.exists(selfPath + "/data"):
+                os.makedirs(selfPath + "/data")
 
-            f = open("data/settings.yml", "w")
-            yaml.dump(dataMap, f, default_flow_style=False)
-            f.close()
+            with open("data/settings.json", 'w+') as f:
+                f.write(json.dumps(dataMap, indent=2, sort_keys=False))
 
         settings = loadSettings()
         if settings["settings"]["startupCheckbox"]:
@@ -330,14 +325,6 @@ class initGui(QtWidgets.QMainWindow):
         if settings["settings"]["trayiconCheckbox"]:
             self.ui.trayiconCheckbox.setChecked(True)
 
-        #if settings["settings"]["logcsvCheckbox"]:
-        #    self.ui.logcsvCheckbox.setChecked(True)
-        #    self.ui.logcsvText.setEnabled(False)
-
-        if settings["settings"]["lograwCheckbox"]:
-            self.ui.lograwCheckbox.setChecked(True)
-            self.ui.lograwText.setEnabled(False)
-
         if settings["settings"]["parserCheckbox"]:
             self.ui.parserCheckbox.setChecked(True)
             self.ui.parserText.setEnabled(False)
@@ -345,39 +332,31 @@ class initGui(QtWidgets.QMainWindow):
         self.ui.deviceText.setText(settings["settings"]["deviceText"])
         self.ui.baudrateText.setText(settings["settings"]["baudrateText"])
         self.ui.baudrateText.setText(settings["settings"]["baudrateText"])
-        self.ui.lograwText.setText(settings["settings"]["lograwText"])
-        #self.ui.logcsvText.setText(settings["settings"]["logcsvText"])
         self.ui.parserText.setText(settings["settings"]["parserText"])
 
     def loadHistory(self):
-        selfPath = os.path.dirname(os.path.realpath(__file__))
-
         self.sendTextHist = history()
-        self.sendTextHist.load(self.ui.sendText, selfPath + "/data/commands.pkl")
+        self.sendTextHist.load(self.ui.sendText, "commands", strict=False)
         self.sendTextHist.setFieldText.connect(self.setFieldText)
 
         self.deviceTextHist = history()
-        self.deviceTextHist.load(self.ui.deviceText, selfPath + "/data/devices.pkl",True)
+        self.deviceTextHist.load(self.ui.deviceText, "devices", strict=True)
         self.deviceTextHist.setFieldText.connect(self.setFieldText)
 
         self.baudrateTextHist = history()
-        self.baudrateTextHist.load(self.ui.baudrateText, selfPath + "/data/baudrates.pkl",True)
+        self.baudrateTextHist.load(self.ui.baudrateText, "baudrates", strict=True)
         self.baudrateTextHist.setFieldText.connect(self.setFieldText)
 
         self.parserTextHist = history()
-        self.parserTextHist.load(self.ui.parserText, selfPath + "/data/parsers.pkl",True)
+        self.parserTextHist.load(self.ui.parserText, "parsers", strict=True)
         self.parserTextHist.setFieldText.connect(self.setFieldText)
 
-        self.lograwTextHist = history()
-        self.lograwTextHist.load(self.ui.lograwText, selfPath + "/data/rawlogs.pkl",True)
-        self.lograwTextHist.setFieldText.connect(self.setFieldText)
-
         self.clientTextHist = history()
-        self.clientTextHist.load(self.ui.clientText, selfPath + "/data/clients.pkl",True)
+        self.clientTextHist.load(self.ui.clientText, "clients", strict=True)
         self.clientTextHist.setFieldText.connect(self.setFieldText)
 
         self.serverTextHist = history()
-        self.serverTextHist.load(self.ui.serverText, selfPath + "/data/servers.pkl",True)
+        self.serverTextHist.load(self.ui.serverText, "servers", strict=True)
         self.serverTextHist.setFieldText.connect(self.setFieldText)
     
     #Form actions
@@ -419,20 +398,11 @@ class initGui(QtWidgets.QMainWindow):
 
     def consoleWrite(self, i):
         if self.ui.timestampCheckbox.isChecked():
-            txt = strftime("[%H:%M:%S")+"] "+str(i)
+            txt = time.strftime("[%H:%M:%S")+"] "+str(i)
         else:
             txt = str(i)
         self.ui.consoleText.append(txt)
         print(i)
-
-        if self.ui.lograwCheckbox.isChecked():
-            try:
-                filename = self.ui.lograwText.text()
-                with open(filename, 'a') as f:
-                    f.write(txt+"\n")
-                f.close
-            except:
-                self.ui.consoleText.append("Error: could not open raw logfile ("+filename+")")
 
     def sendButton(self):
         command = self.ui.sendText.text()
@@ -448,15 +418,6 @@ class initGui(QtWidgets.QMainWindow):
             self.serialread.ser.setDTR(False)
             time.sleep(0.022)
             self.serialread.ser.setDTR(True)
-
-    def collapseButton(self):
-        height = Dialog.frameGeometry().height()
-        if height < 600:
-            Dialog.setFixedHeight(600)
-            saveSettings("settings", "collapse", False)
-        else:
-            Dialog.setFixedHeight(330)
-            saveSettings("settings", "collapse", True)
 
     def connectButton(self):
         device = self.ui.deviceText.text()
@@ -531,6 +492,12 @@ class initGui(QtWidgets.QMainWindow):
         elif click == 1: #right
             app.exit()
 
+    def changeEvent(self, event): #Minimize to tray
+        if self.ui.trayiconCheckbox.isChecked() and event.type() == QtCore.QEvent.WindowStateChange:
+            if self.windowState() and QtCore.Qt.WindowMinimized:
+                self.setWindowState(QtCore.Qt.WindowNoState)
+                self.trayClickEvent(3)
+
     def menuListEvent(self):
         self.ui.stackedWidget.setCurrentIndex(self.ui.menuList.currentRow())
 
@@ -554,10 +521,6 @@ class initGui(QtWidgets.QMainWindow):
         self.baudrateTextHist.move(event.key())
         QtWidgets.QLineEdit.keyPressEvent(self.ui.baudrateText, event)
 
-    def lograwTextEvent(self, event):
-        self.lograwTextHist.move(event.key())
-        QtWidgets.QLineEdit.keyPressEvent(self.ui.lograwText, event)
-
     #YAML
     def genericCheckboxEvent(self):
         saveSettings("settings", self.sender().objectName(), self.sender().isChecked())
@@ -566,16 +529,6 @@ class initGui(QtWidgets.QMainWindow):
         saveSettings("settings", "trayiconCheckbox", self.ui.trayiconCheckbox.isChecked())
         self.trayIcon.setVisible(not self.trayIcon.isVisible())
         self.ui.hideButton.setEnabled(self.ui.trayiconCheckbox.isChecked())
-
-    #def logcsvCheckboxEvent(self):
-    #    saveSettings("settings", "logcsvCheckbox", self.ui.logcsvCheckbox.isChecked())
-    #    self.ui.logcsvText.setEnabled(not self.ui.logcsvCheckbox.isChecked())
-
-    def lograwCheckboxEvent(self):
-        saveSettings("settings", "lograwCheckbox", self.ui.lograwCheckbox.isChecked())
-        self.ui.lograwText.setEnabled(not self.ui.lograwCheckbox.isChecked())
-        if self.ui.lograwCheckbox.isChecked():
-            self.lograwTextHist.save(self.ui.lograwText.text())
 
     def parserCheckboxEvent(self):
         saveSettings("settings", "parserCheckbox", self.ui.parserCheckbox.isChecked())
@@ -589,10 +542,6 @@ if __name__== '__main__':
     app = QtWidgets.QApplication(sys.argv)
     Dialog = initGui()
 
-    settings = loadSettings()
-    if settings["settings"]["collapse"]:
-        Dialog.setFixedHeight(330)
-
     with open(os.path.dirname(os.path.realpath(__file__)) + "/gui/gui.css", "r") as fh:
         Dialog.setStyleSheet(fh.read())
 
@@ -600,3 +549,18 @@ if __name__== '__main__':
         Dialog.show()
 
     sys.exit(app.exec_())
+
+"""
+todo:
+    #instaurer systeme d'identification indépendant de USBttyX, avec clientID.
+    #ajouter button "Export" > dialog de sauvegarde, proposant .csv et .txt
+
+    server prefix handling, serverId in label
+    short checkbox names Chbx
+    normalize names, ie: self.serialread.ser.readline
+
+    rf_bridge:
+        save last clientid to eeprom
+        server handler
+        if setclient = 0, client=all
+"""
