@@ -4,9 +4,9 @@ Bridge is a python application allowing to communicate and interact with various
 ![alt tag](https://raw.githubusercontent.com/willbelr/rf-bridge/master/pictures/gui.png)
 
 # Dependencies
-	Require python 3 and modules pyqt5, qt5-svg, pyserial, yaml
+	Require python 3 and pyqt5, qt5-svg, pyserial
 	Media parser exemple require python-daemon
-	Tested on Linux (may also work on other platforms)
+	Made for Linux, might work on other platforms
 
 # Pinout
 	A6: LED+ (RED)
