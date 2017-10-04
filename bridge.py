@@ -1,15 +1,122 @@
 #!/usr/bin/python3
+#https://github.com/arduino/Arduino/blob/master/build/shared/manpage.adoc
 import serial
 import glob
 import sys
 import os
-import subprocess
 import json
 import time
-from PyQt5 import QtCore, QtGui, QtWidgets
+import argparse
+import subprocess
+from PyQt5 import QtCore, QtGui, QtWidgets, uic
 from PyQt5.QtCore import QThread, QObject, pyqtSignal, pyqtSlot
-from PyQt5.QtWidgets import QSystemTrayIcon, QDesktopWidget
-from gui import gui
+from PyQt5.QtWidgets import QDesktopWidget, QMainWindow, QSystemTrayIcon
+import QtHistory
+
+LOCAL = os.path.dirname(os.path.realpath(__file__))
+if not os.path.exists(LOCAL + "/db"):
+    os.makedirs(LOCAL + "/db")
+PREFERENCES_DB = LOCAL + "/db/preferences.json"
+PROFILES_DB = LOCAL + "/db/profiles.json"
+
+class preferences(object):
+    def __init__(self):
+        if os.path.isfile(PREFERENCES_DB) and os.stat(PREFERENCES_DB).st_size > 0:
+            with open(PREFERENCES_DB) as f:
+                self.db = json.load(f)
+        else:
+            self.db = \
+            {
+                'general': { 'autoconnect': True, 'reconnect': True, 'timestamp': False, 'shell': False },
+                'standalone': { 'tray_icon': True, 'minimize': True, 'icon_online': '%local/online.svg',
+                'icon_offline': '%local/offline.svg', 'input_file': '%local/db/input', 'parse': True },
+                'parsers': { '%local/parsers/rf_remote.py': True, '%local/parsers/if_remote.py': False }
+            }
+            with open(PREFERENCES_DB, "w+") as f:
+                f.write(json.dumps(self.db, indent=2, sort_keys=False))
+        self.load()
+
+    def load(self):
+        self.autoconnect = self.db["general"]["autoconnect"]
+        self.reconnect = self.db["general"]["reconnect"]
+        self.timestamp = self.db["general"]["timestamp"]
+        self.shell = self.db["general"]["shell"]
+        self.tray_icon = self.db["standalone"]["tray_icon"]
+        self.minimize = self.db["standalone"]["minimize"]
+        self.parse = self.db["standalone"]["parse"]
+        self.icon_online = self.db["standalone"]["icon_online"].replace("%local", LOCAL)
+        self.icon_offline = self.db["standalone"]["icon_offline"].replace("%local", LOCAL)
+        self.input_file = self.db["standalone"]["input_file"].replace("%local", LOCAL)
+        with open(self.input_file, "w+") as f:
+            f.close()
+
+    def save(self, name, entry, value):
+        self.db[name][entry] = value
+        with open(PREFERENCES_DB, "w+") as f:
+            f.write(json.dumps(self.db, indent=2, sort_keys=False))
+        self.load()
+
+class profile(object):
+    def __init__(self, entry):
+        self.path = entry
+        self.name = entry.rsplit('/', 1)[-1]
+
+        if os.path.isfile(PROFILES_DB) and os.stat(PROFILES_DB).st_size > 0:
+            with open(PROFILES_DB) as f:
+                self.db = json.load(f)
+        else:
+            self.db = {}
+
+        if not self.name in self.db:
+            self.db[self.name] = \
+            {
+                'verify_cmd': 'arduino --verify %file',
+                'upload_cmd': 'arduino --upload -v --board arduino:avr:nano --port %port %file',
+                'baudrate': '9600'
+            }
+
+            if self.name == "standalone":
+                self.db[self.name]['port'] = '/dev/ttyUSB0'
+            else:
+                self.db[self.name]['port'] = '/dev/ttyUSB1'
+
+            with open(PROFILES_DB, 'w') as f:
+                f.write(json.dumps(self.db, indent=2, sort_keys=False))
+            print("# New profile created for '" + self.name + "'")
+        self.load()
+
+    def load(self):
+        with open(PROFILES_DB) as f:
+            self.db = json.load(f)
+        self.port = self.db[self.name]["port"]
+        self.baudrate = self.db[self.name]["baudrate"]
+        self.verify_cmd = self.db[self.name]["verify_cmd"]
+        self.upload_cmd = self.db[self.name]["upload_cmd"]
+
+    def save(self, entry, value):
+        self.load()
+        self.db[self.name][entry] = value
+        with open(PROFILES_DB, "w+") as f:
+            f.write(json.dumps(self.db, indent=2, sort_keys=False))
+
+def execute(output, cmd, path=None):
+    if not path:
+        path = profile.path
+    cmd = cmd.replace("%port", profile.port)
+    cmd = cmd.replace("%file", path)
+    output("# " + cmd)
+
+    if cmd.rsplit('.', 1)[-1] == "py":
+        cmd = "python " + cmd
+
+    if not preferences.shell:
+        cmd = cmd.split()
+
+    run = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=preferences.shell)
+    for line in iter(run.stdout.readline, b''):
+        data = line.decode().rstrip()
+        output("> " + data)
+    output("# Done")
 
 def portsEnumerate():
     if sys.platform.startswith('linux') or sys.platform.startswith('cygwin'):
@@ -22,8 +129,8 @@ def portsEnumerate():
     result = []
     for port in ports:
         try:
-            s = serial.Serial(port)
-            s.close()
+            session = serial.Serial(port)
+            session.close()
             result.append(port)
         except (OSError, serial.SerialException):
             pass
@@ -34,65 +141,78 @@ def portsEnumerate():
         data = "none"
     return data
 
-class serialRead(QObject):
-    finished = pyqtSignal()
+class serialObject(QObject):
     connectButton = pyqtSignal()
-    setStatusLabel = pyqtSignal()
-    consoleWrite = pyqtSignal(str)
+    buttonsEnable = pyqtSignal(bool)
     connectState = pyqtSignal(str)
+    shout = pyqtSignal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.cmd = ""
 
     @pyqtSlot()
     def loop(self):
-        fault = 0
-        reconnect = False
-        self.clientId = "00"
-
+        current, remaining = "", ""
+        connected = False
+        self.reset = False
         while True:
             if self.serialState:
                 try:
-                    data = self.ser.readline()
-                    data = data.decode("ASCII")
-                    data = data.rstrip()
-                    self.consoleWrite.emit(data)
-                    fault = 0
-                    reconnect = False
+                    #Read input from serial
+                    if (self.session.inWaiting()>0):
+                        data = self.session.readline()
+                        data = data.decode("ASCII")
+                        data = data.rstrip()
+                        self.shout.emit(data)
+                        connected = True
 
-                    if str(data[:7]) == "client=": #@! todo: decent parsing function
-                        self.clientId = data[7:]
-                        self.setStatusLabel.emit()
+                        #Parse data from serial
+                        if profile.name == "standalone" and preferences.parse:
+                            for parser in preferences.db["parsers"]:
+                                if preferences.db["parsers"][parser]:
+                                    parser = parser.replace("%local", LOCAL)
+                                    if os.path.isfile(parser):
+                                        self.cmd = parser + " " + data
+                                    else:
+                                        self.shout.emit('Error: parser not found "' + parser + '"')
 
-                    if Dialog.ui.parserCheckbox.isChecked():
-                        parser = Dialog.ui.parserText.text()
-                        if os.path.isfile(parser):
-                            data = data[3:].rstrip()
-                            parserName = parser.rsplit('/', 1)[-1]
-                            run = subprocess.run(["python", parser, data], timeout=5, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                            
-                            if Dialog.ui.parseroutCheckbox.isChecked():
-                                output = run.stdout.decode("ASCII")
+                    #Fetch commands from input_file
+                    if preferences.input_file:
+                        with open(preferences.input_file, 'r') as queue:
+                            current = queue.readline().rstrip()
+                            remaining = queue.read().splitlines(True)
 
-                                if output:
-                                    self.consoleWrite.emit(parserName + ";\n" + output)
-
-                            if Dialog.ui.parsererrCheckbox.isChecked():
-                                output = run.stderr.decode("ASCII")
-                                if output:
-                                    self.consoleWrite.emit(parserName + ";\n" + output)
-                        else:
-                            self.consoleWrite.emit("Error: could not open parser file")
+                        if current or remaining:
+                            self.shout.emit("# Sent '" + current + "'")
+                            current = current + "\n"
+                            self.session.write(current.encode())
+                            with open(preferences.input_file, 'w') as queue:
+                                queue.writelines(remaining)
                 except:
-                    fault = fault + 1
-                    if fault == 5: #allow a delay after new connection
-                        self.connectState.emit("Connection lost")
-                        reconnect = True
+                    self.shout.emit("# Connection lost: " + str(sys.exc_info()[0]))
+                    self.connectState.emit("Disconnected")
+                    connected = False
 
-            elif reconnect and Dialog.ui.reconnectCheckbox.isChecked():
+            elif not connected and preferences.reconnect:
                 time.sleep(5)
                 if not self.serialState:
                     self.connectButton.emit()
 
+            #Execute command buffer
+            if self.cmd != "":
+                if self.reset and self.serialState:
+                    self.connectButton.emit()
+
+                self.buttonsEnable.emit(False)
+                execute(self.shout.emit, self.cmd)
+                self.buttonsEnable.emit(True)
+                self.cmd = ""
+
+                if self.reset and preferences.reconnect:
+                    self.connectButton.emit()
+                self.reset = False
             time.sleep(0.1)
-        self.finished.emit()
 
 class connectTimer(QObject):
     updateTimer = pyqtSignal()
@@ -103,119 +223,21 @@ class connectTimer(QObject):
             time.sleep(1)
             self.updateTimer.emit()
 
-class history(QObject):
-    setFieldText = pyqtSignal(object, str)
-
-    def load(self, field, entry, strict):
-        selfPath = os.path.dirname(os.path.realpath(__file__))
-        self.historyFile = selfPath + '/data/history.json'
-        self.strict = strict
-        self.field = field
-        self.entry = entry
-        try:
-            with open(self.historyFile) as f:
-                self.tree = json.load(f)
-                self.list = self.tree[entry]
-        except:
-            self.tree = {}
-            self.list = []
-        self.pos = len(self.list)
-
-    def save(self, command):
-        length = len(self.list)
-        if length > 0:
-
-            fault = False
-            if self.strict:
-                for x in self.list:
-                    if x == command:
-                        fault = True
-
-            if not command == self.list[length-1] and not fault:
-                self.list.append(command)
-
-                if length >= 20: #roll
-                    del self.list[0]
-                self.pos = len(self.list)
-                self.dump()
-        else:
-            self.list.append(command)
-            self.dump()
-
-    def dump(self):
-        try:
-            with open(self.historyFile, 'r') as f:
-                self.tree = json.load(f)
-        except:
-            self.tree = {}
-
-        with open(self.historyFile, 'w+') as f:
-            self.tree[self.entry] = self.list
-            f.write(json.dumps(self.tree, indent=2, sort_keys=False))
-
-    @pyqtSlot()
-    def move(self, key):
-        length = len(self.list)
-        if length > 0 and (key == QtCore.Qt.Key_Down or key == QtCore.Qt.Key_Up):
-            if key == QtCore.Qt.Key_Down:
-                self.pos += 1
-            elif key == QtCore.Qt.Key_Up:
-                self.pos -= 1
-
-            if self.pos < 0:
-                self.pos = 0
-            elif self.pos >= length:
-                self.pos = length
-
-            if self.pos == length:
-                self.setFieldText.emit(self.field, "")
-            else:
-                self.setFieldText.emit(self.field, self.list[self.pos])
-
-def loadSettings():
-    selfPath = os.path.dirname(os.path.realpath(__file__))
-    with open(selfPath + '/data/settings.json') as f:
-        dataMap = json.load(f)
-    return dataMap
-
-def saveSettings(settings, device, value):
-    selfPath = os.path.dirname(os.path.realpath(__file__))
-    dataMap = loadSettings()
-    dataMap[settings][device] = value
-    with open(selfPath + '/data/settings.json', "w+") as f:
-        f.write(json.dumps(dataMap, indent=2, sort_keys=False))
-
-    f.close()
-
-def getInt(value):
-    try:
-        foo = int(value) #int
-    except:
-        try:
-            foo = int(value, 16) #hex
-            if foo > 255:
-                foo = 255
-        except:
-            return False
-    return str(foo)
-
-class initGui(QtWidgets.QDialog):
+class initGui(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.ui = gui.Ui_Dialog()
-        self.ui.setupUi(self)
+        self.ui = uic.loadUi(LOCAL + '/gui.ui', self)
 
-        self.serialread = serialRead()
-        self.serialread.serialState = False
-        self.serialread.consoleWrite.connect(self.consoleWrite)
-        self.serialread.setStatusLabel.connect(self.setStatusLabel)
-        self.serialread.connectState.connect(self.setConnectState)
-        self.serialread.connectButton.connect(self.connectButton)
-
+        self.serial = serialObject()
+        self.serial.serialState = False
+        self.ports = ""
+        self.serial.shout.connect(self.shout)
+        self.serial.connectState.connect(self.setConnectState)
+        self.serial.connectButton.connect(self.connectButton_)
+        self.serial.buttonsEnable.connect(self.buttonsEnable)
         self.serialThread = QThread() #move the Worker object to the Thread object
-        self.serialThread.started.connect(self.serialread.loop) #init serial read at startup
-        self.serialread.moveToThread(self.serialThread)
-        self.serialread.finished.connect(self.serialThread.quit)
+        self.serialThread.started.connect(self.serial.loop) #init serial read at startup
+        self.serial.moveToThread(self.serialThread)
         self.serialThread.start()
 
         self.connectTimer = connectTimer()
@@ -225,342 +247,222 @@ class initGui(QtWidgets.QDialog):
         self.connectTimer.moveToThread(self.timerThread)
         self.timerThread.start()
 
-        self.ui.startupCheckbox.clicked.connect(self.genericCheckboxEvent)
-        self.ui.reconnectCheckbox.clicked.connect(self.genericCheckboxEvent)
-        self.ui.minimizeCheckbox.clicked.connect(self.genericCheckboxEvent)
-        self.ui.savelastCheckbox.clicked.connect(self.genericCheckboxEvent)
-        self.ui.parseroutCheckbox.clicked.connect(self.genericCheckboxEvent)
-        self.ui.parsererrCheckbox.clicked.connect(self.genericCheckboxEvent)
-        self.ui.timestampCheckbox.clicked.connect(self.genericCheckboxEvent)
+        if profile.name == "standalone":
+            self.ui.cmdLabel.hide()
+            self.ui.uploadText.hide()
+            self.ui.resetButton.hide()
+            self.ui.verifyButton.hide()
+            self.ui.uploadButton.hide()
 
-        self.ui.parserCheckbox.clicked.connect(self.parserCheckboxEvent)
-        self.ui.trayiconCheckbox.clicked.connect(self.trayiconCheckboxEvent)
+        self.setWindowTitle("Serial monitor (" + profile.name + ")")
+        self.ui.reconnectCheckbox.setChecked(preferences.reconnect)
+        self.ui.portText.setText(profile.port)
+        self.ui.baudrateText.setText(profile.baudrate)
+        self.ui.uploadText.setText(profile.upload_cmd)
 
-        self.ui.connectButton.clicked.connect(self.connectButton)
-        self.ui.sendButton.clicked.connect(self.sendButton)
-        self.ui.resetButton.clicked.connect(self.resetButton)
-        self.ui.menuList.selectionModel().selectionChanged.connect(self.menuListEvent)
-        
-        self.ui.clientText.keyPressEvent = self.clientTextEvent
-        self.ui.serverText.keyPressEvent = self.serverTextEvent
+        self.ui.reconnectCheckbox.clicked.connect(self.reconnectCheckboxEvent)
+        self.ui.connectButton.clicked.connect(self.connectButton_)
+        self.ui.sendButton.clicked.connect(self.sendButton_)
+        self.ui.resetButton.clicked.connect(self.resetButton_)
+        self.ui.verifyButton.clicked.connect(self.verifyButton_)
+        self.ui.uploadButton.clicked.connect(self.uploadButton_)
+
         self.ui.sendText.keyPressEvent = self.sendTextEvent
-        self.ui.parserText.keyPressEvent = self.parserTextEvent
-        self.ui.deviceText.keyPressEvent = self.deviceTextEvent
+        self.ui.portText.keyPressEvent = self.portTextEvent
         self.ui.baudrateText.keyPressEvent = self.baudrateTextEvent
+        self.ui.uploadText.keyPressEvent = self.uploadTextEvent
 
-        #Center
-        #frame = self.frameGeometry()
-        #screen = QDesktopWidget().availableGeometry().center()
-        #frame.moveCenter(screen)
-        #self.move(frame.topLeft())
+        #History events
+        self.sendTextHist = QtHistory.history(self.ui.sendText, "sendText", strict=False)
+        self.sendTextHist.setFieldText.connect(self.setFieldText)
+        self.portTextHist = QtHistory.history(self.ui.portText, "portText", strict=True)
+        self.portTextHist.setFieldText.connect(self.setFieldText)
+        self.baudrateTextHist = QtHistory.history(self.ui.baudrateText, "baudrateText", strict=True)
+        self.baudrateTextHist.setFieldText.connect(self.setFieldText)
+        self.uploadTextHist = QtHistory.history(self.ui.uploadText, "uploadText", strict=True)
+        self.uploadTextHist.setFieldText.connect(self.setFieldText)
 
-        self.ui.menuList.setFocus()
-        self.ui.clientText.setMaxLength(4)
-        self.ui.serverText.setMaxLength(4)
-        self.ui.sendText.setMaxLength(27) #RH_NRF24_MAX_MESSAGE_LEN = 28
-        self.applySettings()
-        self.loadHistory()
-
-        icon = QtGui.QIcon(os.path.dirname(os.path.realpath(__file__)) + '/gui/trayicon.svg')
-        self.trayIcon = QSystemTrayIcon(self)
-        self.trayIcon.setIcon(icon)
-        self.trayIcon.activated.connect(self.trayClickEvent)
-        self.ui.hideButton.setEnabled(self.ui.trayiconCheckbox.isChecked())
-        if self.ui.trayiconCheckbox.isChecked():
+        if profile.name == "standalone" and preferences.tray_icon:
+            self.trayIcon = QSystemTrayIcon()
+            self.trayIcon.activated.connect(self.clickEvent)
+            icon = QtGui.QIcon(preferences.icon_offline)
+            self.trayIcon.setIcon(icon)
             self.trayIcon.show()
 
-        if self.ui.startupCheckbox.isChecked():
-            self.connectButton()
+        if preferences.autoconnect:
+            self.connectButton_()
 
-    #Load settings and history
-    def applySettings(self):
-        selfPath = os.path.dirname(os.path.realpath(__file__))
-        if not os.path.isfile(selfPath + "/data/settings.json") or os.stat(selfPath + "/data/settings.json").st_size == 0:
-            dataMap = \
-            {'settings':
-                {
-                    'baudrateText': '9600',
-                    'deviceText': '/dev/rf_bridge',
-                    'parserCheckbox': True,
-                    'parserText': selfPath + '/parser/media.py',
-                    'trayiconCheckbox': True,
-                    'startupCheckbox': True,
-                    'reconnectCheckbox': True,
-                    'savelastCheckbox': True,
-                    'minimizeCheckbox': False,
-                    'parseroutCheckbox': True,
-                    'parsererrCheckbox': True,
-                    'timestampCheckbox': True
-                }
-            }
-
-            if not os.path.exists(selfPath + "/data"):
-                os.makedirs(selfPath + "/data")
-
-            with open("data/settings.json", 'w+') as f:
-                f.write(json.dumps(dataMap, indent=2, sort_keys=False))
-
-        settings = loadSettings()
-        if settings["settings"]["startupCheckbox"]:
-            self.ui.startupCheckbox.setChecked(True)
-
-        if settings["settings"]["reconnectCheckbox"]:
-            self.ui.reconnectCheckbox.setChecked(True)
-
-        if settings["settings"]["savelastCheckbox"]:
-            self.ui.savelastCheckbox.setChecked(True)
-
-        if settings["settings"]["minimizeCheckbox"]:
-            self.ui.minimizeCheckbox.setChecked(True)
-
-        if settings["settings"]["parseroutCheckbox"]:
-            self.ui.parseroutCheckbox.setChecked(True)
-
-        if settings["settings"]["parsererrCheckbox"]:
-            self.ui.parsererrCheckbox.setChecked(True)
-
-        if settings["settings"]["timestampCheckbox"]:
-            self.ui.timestampCheckbox.setChecked(True)
-
-        if settings["settings"]["trayiconCheckbox"]:
-            self.ui.trayiconCheckbox.setChecked(True)
-
-        if settings["settings"]["parserCheckbox"]:
-            self.ui.parserCheckbox.setChecked(True)
-            self.ui.parserText.setEnabled(False)
-
-        self.ui.deviceText.setText(settings["settings"]["deviceText"])
-        self.ui.baudrateText.setText(settings["settings"]["baudrateText"])
-        self.ui.baudrateText.setText(settings["settings"]["baudrateText"])
-        self.ui.parserText.setText(settings["settings"]["parserText"])
-
-    def loadHistory(self):
-        self.sendTextHist = history()
-        self.sendTextHist.load(self.ui.sendText, "commands", strict=False)
-        self.sendTextHist.setFieldText.connect(self.setFieldText)
-
-        self.deviceTextHist = history()
-        self.deviceTextHist.load(self.ui.deviceText, "devices", strict=True)
-        self.deviceTextHist.setFieldText.connect(self.setFieldText)
-
-        self.baudrateTextHist = history()
-        self.baudrateTextHist.load(self.ui.baudrateText, "baudrates", strict=True)
-        self.baudrateTextHist.setFieldText.connect(self.setFieldText)
-
-        self.parserTextHist = history()
-        self.parserTextHist.load(self.ui.parserText, "parsers", strict=True)
-        self.parserTextHist.setFieldText.connect(self.setFieldText)
-
-        self.clientTextHist = history()
-        self.clientTextHist.load(self.ui.clientText, "clients", strict=True)
-        self.clientTextHist.setFieldText.connect(self.setFieldText)
-
-        self.serverTextHist = history()
-        self.serverTextHist.load(self.ui.serverText, "servers", strict=True)
-        self.serverTextHist.setFieldText.connect(self.setFieldText)
-    
     #Form actions
-    def clientTextEvent(self, event):
-        self.clientTextHist.move(event.key())
-        if event.key() == QtCore.Qt.Key_Return and self.ui.clientText.text():
-
-            client = getInt(self.ui.clientText.text())
-            if client:
-                self.ui.clientText.setText(client)
-
-                if self.ui.clientText.text():
-                    cmd = "setclient "+self.ui.clientText.text()
-                    self.ui.sendText.setText(cmd)
-                    self.sendButton()
-                elif not self.ui.clientText.text():
-                    self.ui.sendText.setText("pairing")
-                    self.sendButton()
-                self.clientTextHist.save(self.ui.clientText.text())
-                self.ui.clientText.clear()
-            else:
-                self.consoleWrite("Error: invalid client address, expected int or hex value")
-
-        QtWidgets.QLineEdit.keyPressEvent(self.ui.clientText, event)
-
-    def serverTextEvent(self, event): #@! todo
-        self.serverTextHist.move(event.key())
-
-        if event.key() == QtCore.Qt.Key_Return and self.ui.serverText.text():
-            server = getInt(self.ui.serverText.text())
-            if server:
-                print(server)
-                self.serverTextHist.save(self.ui.serverText.text())
-                self.ui.serverText.clear()
-            else:
-                self.consoleWrite("Error: invalid server address, expected int or hex value")
-
-        QtWidgets.QLineEdit.keyPressEvent(self.ui.serverText, event)
-
-    def consoleWrite(self, i):
-        if self.ui.timestampCheckbox.isChecked():
-            txt = time.strftime("[%H:%M:%S")+"] "+str(i)
+    def shout(self, output):
+        if preferences.timestamp:
+            output = time.strftime("[%H:%M:%S")+"] " + str(output)
         else:
-            txt = str(i)
-        self.ui.consoleText.append(txt)
-        print(i)
+            output = str(output)
+        self.ui.consoleText.append(output)
+        print(output)
 
-    def sendButton(self):
+    def sendButton_(self):
         command = self.ui.sendText.text()
-
-        if self.serialread.serialState and command:
+        if self.serial.serialState and command:
             self.sendTextHist.save(command)
+            self.shout("# Sent '" + command + "'")
             cmd = command + "\n"
-            self.serialread.ser.write(cmd.encode())
+            self.serial.session.write(cmd.encode())
             self.ui.sendText.clear()
 
-    def resetButton(self):
-        if self.serialread.serialState:
-            self.serialread.ser.setDTR(False)
+    def resetButton_(self):
+        if self.serial.serialState:
+            self.shout("# Sent data terminal ready signal (reset)")
+            self.serial.session.setDTR(False)
             time.sleep(0.022)
-            self.serialread.ser.setDTR(True)
+            self.serial.session.setDTR(True)
 
-    def connectButton(self):
-        device = self.ui.deviceText.text()
+    def verifyButton_(self):
+        profile.load()
+        self.uploadTextHist.save(self.ui.uploadText.text())
+        self.serial.cmd = profile.verify_cmd
+        self.serial.reset = False
+
+    def uploadButton_(self):
+        profile.load()
+        self.uploadTextHist.save(self.ui.uploadText.text())
+        self.serial.cmd = profile.upload_cmd
+        self.serial.reset = True
+
+    def connectButton_(self):
+        device = self.ui.portText.text()
         baudrate = self.ui.baudrateText.text()
 
-        if self.serialread.serialState:
+        if self.serial.serialState:
             self.setConnectState("Disconnected")
         else:
             try:
-                self.serialread.ser = serial.Serial(device, baudrate)
-                self.consoleWrite("Connecting to " + device + " (" + baudrate + ")...")
-                self.serialread.serialState = True
+                self.serial.session = serial.Serial(device, baudrate)
+                self.shout("# Connecting to " + device + " (" + baudrate + ")...")
+                self.serial.serialState = True
 
                 #Send reset signal to AVR
-                self.serialread.ser.setDTR(False)
+                self.serial.session.setDTR(False)
                 time.sleep(0.022)
-                self.serialread.ser.setDTR(True)
-
+                self.serial.session.setDTR(True)
                 self.setConnectState("Connected")
-
-                if self.ui.savelastCheckbox.isChecked():
-                    saveSettings("settings", "deviceText", device)
-                    saveSettings("settings", "baudrateText", baudrate)
-                self.deviceTextHist.save(device)
+                self.portTextHist.save(device)
                 self.baudrateTextHist.save(baudrate)
 
             except serial.serialutil.SerialException:
-                portsList = "Error: connection failed, available devices: " + str(portsEnumerate())
-                self.consoleWrite(portsList)
-                self.serialread.serialState = False
+                ports = str(portsEnumerate())
+                if not self.ports == ports:
+                    self.ports = ports
+                    self.shout("# Error: connection failed, available ports: " + ports)
+                self.serial.serialState = False
 
-    def setStatusLabel(self):
-        if self.serialread.serialState:
-            self.ui.clientLabel.setText("Client address (0x" + self.serialread.clientId + ")")
-            self.ui.serverLabel.setText("Server address (0x00)") #@!
-
-            saveSettings("settings", "clientId", self.serialread.clientId)
-        else:
-            self.ui.statusLabel.setText("Disconnected")
+    def buttonsEnable(self, state):
+        self.ui.connectButton.setEnabled(state)
+        self.ui.resetButton.setEnabled(state)
+        self.ui.verifyButton.setEnabled(state)
+        self.ui.uploadButton.setEnabled(state)
 
     def updateTimer(self):
-        if self.serialread.serialState:
+        if self.serial.serialState:
             elapsed = time.time() - self.startTime
             m, s = divmod(elapsed, 60)
             h, m = divmod(m, 60)
             elapsed = "%02d:%02d:%02d" % (h, m, s)
-            self.ui.statusLabel.setText("Connected, " + elapsed+ "")
+            status = "Connected, " + elapsed
         else:
-            self.ui.statusLabel.setText("Disconnected")
+            status = "Disconnected"
+
+        self.statusBar().showMessage(status)
+        if profile.name == "standalone" and preferences.tray_icon:
+            self.trayIcon.setToolTip(status)
 
     def setConnectState(self, i):
         if i == "Connected":
-            self.serialread.serialState = True
+            self.serial.serialState = True
             self.ui.sendButton.setEnabled(True)
+            self.ui.resetButton.setEnabled(True)
             self.ui.connectButton.setText("Disconnect")
             self.startTime = time.time()
+            self.shout("# New connection established")
+            icon = QtGui.QIcon(preferences.icon_online)
         else:
-            self.serialread.serialState = False
+            self.serial.serialState = False
             self.ui.sendButton.setEnabled(False)
+            self.ui.resetButton.setEnabled(False)
             self.ui.connectButton.setText("Connect")
-            self.consoleWrite(i)
-            self.serialread.ser.close()
-        self.setStatusLabel()
+            self.serial.session.close()
+            self.shout("# Disconnected")
+            icon = QtGui.QIcon(preferences.icon_offline)
 
-    def trayClickEvent(self, click):
-        if click == 3: #left
-            if self.isVisible():
-                self.hide()
-            else:
-                self.show()
+        if profile.name == "standalone" and preferences.tray_icon:
+            self.trayIcon.setIcon(icon)
 
-        elif click == 1: #right
-            app.exit()
+    #System tray icon
+    def clickEvent(self):
+        if self.isVisible():
+            self.hide()
+        else:
+            self.show()
 
-    def changeEvent(self, event): #Minimize to tray
-        if self.ui.trayiconCheckbox.isChecked() and event.type() == QtCore.QEvent.WindowStateChange:
+    def minimize(self, event):
+        if profile.name == "standalone" and preferences.tray_icon and event.type() == QtCore.QEvent.WindowStateChange:
             if self.windowState() and QtCore.Qt.WindowMinimized:
                 self.setWindowState(QtCore.Qt.WindowNoState)
-                self.trayClickEvent(3)
-
-    def menuListEvent(self):
-        self.ui.stackedWidget.setCurrentIndex(self.ui.menuList.currentRow())
+                self.clickEvent()
 
     #History
     def setFieldText(self, field, text):
         field.setText(text)
 
-    def sendTextEvent(self, event): #@! redundant
+    def sendTextEvent(self, event):
         self.sendTextHist.move(event.key())
         QtWidgets.QLineEdit.keyPressEvent(self.ui.sendText, event)
 
-    def parserTextEvent(self, event):
-        self.parserTextHist.move(event.key())
-        QtWidgets.QLineEdit.keyPressEvent(self.ui.parserText, event)
+    def portTextEvent(self, event):
+        self.portTextHist.move(event.key())
+        QtWidgets.QLineEdit.keyPressEvent(self.ui.portText, event)
+        profile.save("port", self.ui.portText.text())
 
-    def deviceTextEvent(self, event):
-        self.deviceTextHist.move(event.key())
-        QtWidgets.QLineEdit.keyPressEvent(self.ui.deviceText, event)
+    def uploadTextEvent(self, event):
+        self.uploadTextHist.move(event.key())
+        QtWidgets.QLineEdit.keyPressEvent(self.ui.uploadText, event)
+        profile.save("upload_cmd", self.ui.uploadText.text())
 
     def baudrateTextEvent(self, event):
-        self.baudrateTextHist.move(event.key())
-        QtWidgets.QLineEdit.keyPressEvent(self.ui.baudrateText, event)
+        q = QtCore.Qt
+        allowed = \
+        {
+            q.Key_0, q.Key_1, q.Key_2, q.Key_3, q.Key_4, q.Key_5, q.Key_6, q.Key_7, q.Key_8, q.Key_9,
+            q.Key_Backspace, q.Key_Up, q.Key_Down, q.Key_Left, q.Key_Right
+        }
+        if event.key() in allowed or event.modifiers() == q.ControlModifier:
+            self.baudrateTextHist.move(event.key())
+            QtWidgets.QLineEdit.keyPressEvent(self.ui.baudrateText, event)
+            profile.save("baudrate", self.ui.baudrateText.text())
 
-    #YAML
-    def genericCheckboxEvent(self):
-        saveSettings("settings", self.sender().objectName(), self.sender().isChecked())
-
-    def trayiconCheckboxEvent(self):
-        saveSettings("settings", "trayiconCheckbox", self.ui.trayiconCheckbox.isChecked())
-        self.trayIcon.setVisible(not self.trayIcon.isVisible())
-        self.ui.hideButton.setEnabled(self.ui.trayiconCheckbox.isChecked())
-
-    def parserCheckboxEvent(self):
-        saveSettings("settings", "parserCheckbox", self.ui.parserCheckbox.isChecked())
-        self.ui.parserText.setEnabled(not self.ui.parserCheckbox.isChecked())
-
-        parser = self.ui.parserText.text()
-        if parser and self.ui.parserCheckbox.isChecked():
-            self.parserTextHist.save(parser)
+    def reconnectCheckboxEvent(self):
+        preferences.save("general", "reconnect", self.sender().isChecked())
 
 if __name__== '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-o", "--open", default="standalone", help="open a file with the monitor", metavar='')
+    parser.add_argument("-u", "--upload", help="upload firmware from a file", metavar='')
+
+    preferences = preferences()
+    args = parser.parse_args()
+    if args.upload:
+        profile = profile(args.upload)
+        execute(print, profile.upload_cmd, profile.path)
+        sys.exit(0)
+
+    elif args.open:
+        profile = profile(args.open)
+
+    else:
+        profile = profile("standalone")
+
     app = QtWidgets.QApplication(sys.argv)
     Dialog = initGui()
-
-    with open(os.path.dirname(os.path.realpath(__file__)) + "/gui/gui.css", "r") as fh:
-        Dialog.setStyleSheet(fh.read())
-
-    if not Dialog.ui.trayiconCheckbox.isChecked() or not Dialog.ui.minimizeCheckbox.isChecked():
+    if not profile.name == "standalone" or not preferences.minimize:
         Dialog.show()
-
     sys.exit(app.exec_())
-
-"""
-todo:
-    #instaurer systeme d'identification indépendant de USBttyX, avec clientID.
-    #ajouter button "Export" > dialog de sauvegarde, proposant .csv et .txt
-
-    server prefix handling, serverId in label
-    short checkbox names Chbx
-    normalize names, ie: self.serialread.ser.readline
-
-    rf_bridge:
-        save last clientid to eeprom
-        server handler
-        if setclient = 0, client=all
-"""
