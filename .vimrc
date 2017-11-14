@@ -1,3 +1,6 @@
+"This example make use of both xterm and urxvt terminals.
+"You'll have to modify the terminals commands and the bridge.py location according to your favorite configuration.
+
 "Execute/Upload current file
 function! Run()
   let ext = expand('%:e')
