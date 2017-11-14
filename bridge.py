@@ -75,10 +75,11 @@ class profile(object):
                 'baudrate': '9600'
             }
 
-            if self.name == "standalone":
-                self.db[self.name]['port'] = '/dev/ttyUSB0'
-            else:
-                self.db[self.name]['port'] = '/dev/ttyUSB1'
+            #if self.name == "standalone":
+            #    self.db[self.name]['port'] = '/dev/ttyUSB0'
+            #else:
+            #    self.db[self.name]['port'] = '/dev/ttyUSB1'
+            self.db[self.name]['port'] = '/dev/ttyUSB0'
 
             with open(PROFILES_DB, 'w') as f:
                 f.write(json.dumps(self.db, indent=2, sort_keys=False))
