@@ -21,7 +21,7 @@ When also using the provided arduino script, it may serve as a standalone applic
 - Media parser exemple require python-daemon
 - Made for Linux, might work on other platforms
 
-# Example project (radio device)
+# Example project (serial bridge for radio device)
 This example is used to control media applications from a nRF24 remote (see https://github.com/willbelr/rf-remote).
 
 Pinout
