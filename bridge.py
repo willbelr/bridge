@@ -14,6 +14,7 @@ from PyQt5.QtWidgets import QDesktopWidget, QMainWindow, QSystemTrayIcon
 import QtHistory
 
 LOCAL = os.path.dirname(os.path.realpath(__file__))
+ICONS = LOCAL + "/icons/"
 if not os.path.exists(LOCAL + "/db"):
     os.makedirs(LOCAL + "/db")
 PREFERENCES_DB = LOCAL + "/db/preferences.json"
@@ -28,8 +29,7 @@ class preferences(object):
             self.db = \
             {
                 'general': { 'autoconnect': True, 'reconnect': True, 'timestamp': False, 'shell': False },
-                'standalone': { 'tray_icon': True, 'minimize': True, 'icon_online': '%local/online.svg',
-                'icon_offline': '%local/offline.svg', 'input_file': '%local/db/input', 'parse': True },
+                'standalone': { 'tray_icon': True, 'minimize': True, 'input_file': '%local/db/input', 'parse': True },
                 'parsers': { '%local/parsers/rf_remote.py': True, '%local/parsers/if_remote.py': False }
             }
             with open(PREFERENCES_DB, "w+") as f:
@@ -44,8 +44,6 @@ class preferences(object):
         self.tray_icon = self.db["standalone"]["tray_icon"]
         self.minimize = self.db["standalone"]["minimize"]
         self.parse = self.db["standalone"]["parse"]
-        self.icon_online = self.db["standalone"]["icon_online"].replace("%local", LOCAL)
-        self.icon_offline = self.db["standalone"]["icon_offline"].replace("%local", LOCAL)
         self.input_file = self.db["standalone"]["input_file"].replace("%local", LOCAL)
         with open(self.input_file, "w+") as f:
             f.close()
@@ -286,7 +284,7 @@ class initGui(QtWidgets.QMainWindow):
         if profile.name == "standalone" and preferences.tray_icon:
             self.trayIcon = QSystemTrayIcon()
             self.trayIcon.activated.connect(self.clickEvent)
-            icon = QtGui.QIcon(preferences.icon_offline)
+            icon = QtGui.QIcon(ICONS + "offline.svg")
             self.trayIcon.setIcon(icon)
             self.trayIcon.show()
 
@@ -385,7 +383,7 @@ class initGui(QtWidgets.QMainWindow):
             self.ui.connectButton.setText("Disconnect")
             self.startTime = time.time()
             self.shout("# New connection established")
-            icon = QtGui.QIcon(preferences.icon_online)
+            icon = QtGui.QIcon(ICONS + "online.svg")
         else:
             self.serial.serialState = False
             self.ui.sendButton.setEnabled(False)
@@ -393,7 +391,7 @@ class initGui(QtWidgets.QMainWindow):
             self.ui.connectButton.setText("Connect")
             self.serial.session.close()
             self.shout("# Disconnected")
-            icon = QtGui.QIcon(preferences.icon_offline)
+            icon = QtGui.QIcon(ICONS + "offline.svg")
 
         if profile.name == "standalone" and preferences.tray_icon:
             self.trayIcon.setIcon(icon)
