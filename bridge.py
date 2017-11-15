@@ -30,7 +30,7 @@ class preferences(object):
             {
                 'general': { 'autoconnect': True, 'reconnect': True, 'timestamp': False, 'shell': False },
                 'standalone': { 'tray_icon': True, 'minimize': True, 'input_file': '%local/db/input', 'parse': True },
-                'parsers': { '%local/parsers/rf_remote.py': True, '%local/parsers/if_remote.py': False }
+                'parsers': { '%local/parsers/rf_remote.py': False, '%local/parsers/if_remote.py': False }
             }
             with open(PREFERENCES_DB, "w+") as f:
                 f.write(json.dumps(self.db, indent=2, sort_keys=False))
