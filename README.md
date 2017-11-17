@@ -1,12 +1,14 @@
 # Bridge
-Bridge is a python application that communicate with Arduino using pySerial. It replace the Serial Monitor from the Arduino IDE and make use of it's command line interface to upload and verify code, all in a single window. It's purpose is to provide a more flexible and lighter way to interact with arduino compatible boards using an external editor. The script has a command line interface that ease the commucation with other applications. Each ino file opened with Bridge has it's own profile that save the last used board type (ie: uno, nano), serial port and baudrate. An example (.vimrc) is provided for the integration with Vim, using F1 to upload and F2 to open Bridge GUI with the current file. 
-
-When also using the provided arduino script, it may serve as a standalone application that can send data to serial input, and monitor serial output through external parser software, allowing easy development of arduino/python interactive scripts.
-
 **Integration with vim:**
+
+Bridge is a python application that communicate with Arduino using pySerial. It replace the Serial Monitor from the Arduino IDE and make use of it's command line interface to upload and verify code, all in a single window. It's purpose is to provide a more flexible and lighter way to interact with arduino compatible boards using an external editor. The script has a command line interface that ease the commucation with other applications. Each ino file opened with Bridge has it's own profile that save the last used board type (ie: uno, nano), serial port and baudrate. An example (.vimrc) is provided for the integration with Vim, using F1 to upload and F2 to open Bridge GUI with the current file.
+
 ![alt tag](https://raw.githubusercontent.com/willbelr/rf-bridge/master/pictures/gui.png)
 
 **Standalone mode** (parsing with rf_remote.py)
+
+When also using the provided arduino script, it may serve as a standalone application that can send data to serial input, and monitor serial output through external parser software, allowing easy development of arduino/python interactive scripts.
+
 ![alt tag](https://raw.githubusercontent.com/willbelr/rf-bridge/master/pictures/gui-standalone.png)
 
 # Command line interface
