@@ -115,7 +115,6 @@ def execute(output, cmd, path=None):
     for line in iter(run.stdout.readline, b''):
         data = line.decode().rstrip()
         output("> " + data)
-    output("# Done")
 
 def portsEnumerate():
     if sys.platform.startswith('linux') or sys.platform.startswith('cygwin'):
