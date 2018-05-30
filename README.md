@@ -12,7 +12,7 @@ When also using the provided arduino script, it may serve as a standalone applic
 ![alt tag](https://raw.githubusercontent.com/willbelr/rf-bridge/master/pictures/gui-standalone.png)
 
 # Command line interface
-  usage: __init__.py [-h] [-o] [-u] [-s]
+  usage: \_\_init\_\_.py [-h] [-o] [-u] [-s]
 
   optional arguments:
   
