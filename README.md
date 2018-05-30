@@ -12,20 +12,30 @@ When also using the provided arduino script, it may serve as a standalone applic
 ![alt tag](https://raw.githubusercontent.com/willbelr/rf-bridge/master/pictures/gui-standalone.png)
 
 # Command line interface
-  usage: bridge.py [-h] [-o] [-u]
+  usage: __init__.py [-h] [-o] [-u] [-s]
 
   optional arguments:
   
-  -h, --help:      show this help message and exit
+  -h, --help:     show this help message and exit
   
   -o, --open:     open a file with the monitor
   
   -u, --upload:   upload firmware from a file
+  
+  -s, --send:     send data through the active serial connection
 
 # Dependencies
-- Python 3+, PyQt5 with Qt5-svg, PySerial
+- Python 3+, PyQt5 with qt5-svg and qt5-serialport modules
 - Media parser exemple require python-daemon
 - Made for Linux, might work on other platforms
+
+# Todo list
+- Improve serial speed / Investigate python overload bug with fast serial
+- Use the upload command to upload within the running instance if available
+- Save autoconnect in profile instead of preferences
+- Investigate quirks with lineEdit history function
+- Remember programmer type  and manually update the saved value in Arduino IDE database? Bypass Arduino API?
+- Proper packaging for AUR and pip
 
 # Example project (serial bridge for radio device)
 This example is used to control media applications from a nRF24 remote (see https://github.com/willbelr/rf-remote).
